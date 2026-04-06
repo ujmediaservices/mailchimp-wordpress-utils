@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>*|MC:SUBJECT|*</title>
+
+  <style>
+    /* ── Reset ─────────────────────────────────────────────── */
+    body, table, td, p, a, li { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+    body   { margin: 0; padding: 0; width: 100%; background: #f7f7f7; }
+    table  { border-collapse: collapse; }
+    img    { border: 0; height: auto; outline: none; text-decoration: none; display: block; }
+    p      { margin: 0 0 16px 0; }
+
+    /* ── Typography ────────────────────────────────────────── */
+    body, td, p, a {
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      font-size: 18px;
+      line-height: 1.5;
+      color: #222222;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+    h1 {
+      font-size: 32px; font-weight: bold; color: #b3421d;
+      margin: 0 0 8px 0; line-height: 1.3;
+    }
+    h2 {
+      font-size: 24px; font-weight: bold; color: #b3421d;
+      margin: 0 0 8px 0; line-height: 1.3;
+    }
+    a { color: #b3421d; text-decoration: underline; }
+
+    /* ── Button ─────────────────────────────────────────────── */
+    .btn {
+      background-color: #b3421d; border-radius: 4px;
+      color: #ffffff !important; text-decoration: none;
+      font-size: 16px; font-weight: bold;
+      padding: 14px 28px; display: inline-block;
+    }
+
+    /* ── Mobile ─────────────────────────────────────────────── */
+    @media only screen and (max-width: 480px) {
+      .wrapper { width: 100% !important; }
+      .content { padding: 16px !important; }
+      .post-image img { width: 100% !important; }
+    }
+  </style>
+</head>
+
+<body>
+  <!--*|IF:MC_PREVIEW_TEXT|*-->
+  <span style="display:none;font-size:0;line-height:0;max-height:0;overflow:hidden;">
+    *|MC_PREVIEW_TEXT|*
+  </span>
+  <!--*|END:IF|*-->
+
+  <!-- ══════════════════════════════════════════════════════════
+       OUTER WRAPPER
+       ══════════════════════════════════════════════════════════ -->
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f7f7;">
+    <tr>
+      <td align="center" style="padding: 24px 0;">
+
+        <!-- ── Content container (660 px max) ──────────────── -->
+        <table role="presentation" class="wrapper" width="660" cellpadding="0" cellspacing="0"
+               style="max-width:660px; width:100%; background-color:#ffffff;">
+
+
+          <!-- ════════════════════════════════════════════════
+               HEADER
+               ════════════════════════════════════════════════ -->
+          <tr>
+            <td class="content" style="padding: 16px 24px; text-align: center; font-size: 14px; color: #999999;">
+              <a href="*|ARCHIVE|*" style="color: #999999; text-decoration: underline;">
+                View this email in your browser
+              </a>
+            </td>
+          </tr>
+
+          <!-- Section heading -->
+          <tr>
+            <td class="content" style="padding: 12px 24px;">
+              <h1 style="font-size:32px; margin:0;">From our website</h1>
+            </td>
+          </tr>
+
+
+          <!-- ════════════════════════════════════════════════
+               POSTS  (one block per post)
+               ════════════════════════════════════════════════ -->
+          {% for post in posts %}
+          <!-- ── Post {{ loop.index }}: {{ post.title }} ───── -->
+          <tr>
+            <td class="content" style="padding: 12px 24px;">
+
+              <!-- Featured image -->
+              {% if post.image_url %}
+              <a href="{{ post.url }}" target="_blank" class="post-image">
+                <img src="{{ post.image_url }}" alt="{{ post.title }}"
+                     width="612" style="width:100%; max-width:612px; height:auto; border-radius:4px; margin-bottom:16px;" />
+              </a>
+              {% endif %}
+
+              <!-- Title -->
+              <h2>
+                <a href="{{ post.url }}" target="_blank" style="color:#b3421d; text-decoration:none;">
+                  {{ post.title }}
+                </a>
+              </h2>
+
+              <!-- Excerpt -->
+              <p style="font-size:18px; line-height:1.5; color:#222222; margin:0 0 20px 0;">
+                {{ post.excerpt }}
+              </p>
+
+              <!-- Read more button -->
+              <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 0 auto 24px auto;">
+                <tr>
+                  <td align="center" style="border-radius:4px; background-color:#b3421d;">
+                    <a href="{{ post.url }}" target="_blank" class="btn"
+                       style="background-color:#b3421d; border-radius:4px; color:#ffffff; display:inline-block;
+                              font-family:Arial, Helvetica, sans-serif; font-size:16px; font-weight:bold;
+                              padding:14px 28px; text-decoration:none;">
+                      Read more
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+            </td>
+          </tr>
+
+          {% if not loop.last %}
+          <!-- Divider between posts -->
+          <tr>
+            <td style="padding: 0 24px;">
+              <hr style="border:0; border-top:1px solid #e0e0e0; margin:0;" />
+            </td>
+          </tr>
+          {% endif %}
+          {% endfor %}
+
+
+          <!-- ════════════════════════════════════════════════
+               INSIDER UPGRADE CTA
+               ════════════════════════════════════════════════ -->
+          <tr>
+            <td style="padding: 0 24px;">
+              <hr style="border:0; border-top:2px solid #b3421d; margin:24px 0 0 0;" />
+            </td>
+          </tr>
+
+          <tr>
+            <td class="content" style="padding: 12px 24px;">
+              <h2>
+                <a href="https://unseen-japan.com/support/?utm_medium=email&amp;utm_source=newsletter"
+                   target="_blank" style="color:#b3421d; text-decoration:none;">
+                  Upgrade to Insider
+                </a>
+              </h2>
+              <p style="font-size:18px; line-height:1.5; color:#222222;">
+                Thanks for reading the free version of the UJ newsletter.
+                Get access to exclusive content and fresh insights into Japan &mdash;
+                upgrade to
+                <a href="https://unseen-japan.com/subscribe" target="_blank">Unseen Japan Insider</a>
+                and get a free bonus article weekly, plus
+                <a href="https://unseen-japan.com/category/insider" target="_blank">access to all back issues</a>.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Join Insider button -->
+          <tr>
+            <td align="center" style="padding: 12px 24px 24px 24px;">
+              <table role="presentation" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center" style="border-radius:4px; background-color:#b3421d;">
+                    <a href="https://unseen-japan.com/support/?utm_medium=email&amp;utm_source=newsletter"
+                       target="_blank" class="btn"
+                       style="background-color:#b3421d; border-radius:4px; color:#ffffff; display:inline-block;
+                              font-family:Arial, Helvetica, sans-serif; font-size:16px; font-weight:bold;
+                              padding:14px 28px; text-decoration:none;">
+                      Join Insider
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+
+          <!-- ════════════════════════════════════════════════
+               SIGN-OFF
+               ════════════════════════════════════════════════ -->
+          <tr>
+            <td class="content" style="padding: 12px 24px 24px 24px;">
+              <p style="font-size:18px; line-height:1.5; color:#222222; margin:0;">
+                &#12414;&#12383;&#12397; (until next time)&#12289;<br />
+                Jay Allen<br />
+                Publisher, <a href="https://unseen-japan.com" target="_blank">Unseen Japan</a>
+              </p>
+            </td>
+          </tr>
+
+        </table>
+        <!-- ── /Content container ──────────────────────────── -->
+
+
+        <!-- ════════════════════════════════════════════════
+             FOOTER
+             ════════════════════════════════════════════════ -->
+        <table role="presentation" class="wrapper" width="660" cellpadding="0" cellspacing="0"
+               style="max-width:660px; width:100%;">
+          <tr>
+            <td style="padding: 24px; text-align:center; font-size:13px; line-height:1.5; color:#999999;">
+              Copyright &copy; *|CURRENT_YEAR|* *|LIST:COMPANY|*, All rights reserved.<br />
+              *|IFNOT:ARCHIVE_PAGE|*
+              *|LIST:DESCRIPTION|*<br />
+              <br />
+              <strong>Our mailing address is:</strong><br />
+              *|HTML:LIST_ADDRESS_HTML|*<br />
+              <br />
+              <a href="*|UNSUB|*" style="color:#999999;">Unsubscribe</a>
+              &nbsp;&middot;&nbsp;
+              <a href="*|UPDATE_PROFILE|*" style="color:#999999;">Update preferences</a>
+              *|END:IF|*
+            </td>
+          </tr>
+        </table>
+
+      </td>
+    </tr>
+  </table>
+  <!-- ── /OUTER WRAPPER ────────────────────────────────────── -->
+
+</body>
+</html>

@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>*|MC:SUBJECT|*</title>
+
+  <style>
+    /* ── Reset ─────────────────────────────────────────────── */
+    body, table, td, p, a, li { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+    body   { margin: 0; padding: 0; width: 100%; background: #f7f7f7; }
+    table  { border-collapse: collapse; }
+    img    { border: 0; height: auto; outline: none; text-decoration: none; display: block; }
+    p      { margin: 0 0 16px 0; }
+
+    /* ── Typography ────────────────────────────────────────── */
+    body, td, p, a {
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      font-size: 18px;
+      line-height: 1.5;
+      color: #222222;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+    h1 {
+      font-size: 32px; font-weight: bold; color: #b3421d;
+      margin: 0 0 16px 0; line-height: 1.3;
+    }
+    h2 {
+      font-size: 24px; font-weight: bold; color: #b3421d;
+      margin: 24px 0 8px 0; line-height: 1.3;
+    }
+    a { color: #b3421d; text-decoration: underline; }
+    figure { margin: 16px 0; }
+    figcaption {
+      font-size: 14px; color: #666666; line-height: 1.4;
+      margin-top: 8px; text-align: center; font-style: italic;
+    }
+
+    /* ── Mobile ─────────────────────────────────────────────── */
+    @media only screen and (max-width: 480px) {
+      .wrapper { width: 100% !important; }
+      .content { padding: 16px !important; }
+      .article-body img { width: 100% !important; height: auto !important; }
+    }
+  </style>
+</head>
+
+<body>
+  <!--*|IF:MC_PREVIEW_TEXT|*-->
+  <span style="display:none;font-size:0;line-height:0;max-height:0;overflow:hidden;">
+    *|MC_PREVIEW_TEXT|*
+  </span>
+  <!--*|END:IF|*-->
+
+  <!-- ══════════════════════════════════════════════════════════
+       OUTER WRAPPER
+       ══════════════════════════════════════════════════════════ -->
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f7f7;">
+    <tr>
+      <td align="center" style="padding: 24px 0;">
+
+        <!-- ── Content container (660 px max) ──────────────── -->
+        <table role="presentation" class="wrapper" width="660" cellpadding="0" cellspacing="0"
+               style="max-width:660px; width:100%; background-color:#ffffff; table-layout:fixed;">
+
+
+          <!-- ════════════════════════════════════════════════
+               HEADER
+               ════════════════════════════════════════════════ -->
+          <tr>
+            <td class="content" style="padding: 16px 24px; text-align: center; font-size: 14px; color: #999999;">
+              <a href="*|ARCHIVE|*" style="color: #999999; text-decoration: underline;">
+                View this email in your browser
+              </a>
+            </td>
+          </tr>
+
+
+          <!-- ════════════════════════════════════════════════
+               GREETING
+               ════════════════════════════════════════════════ -->
+          <tr>
+            <td class="content" style="padding: 12px 24px;">
+              <p style="font-size:18px; line-height:1.5; color:#222222;">
+                Hi there *|FNAME|*,
+              </p>
+              <p style="font-size:18px; line-height:1.5; color:#222222;">
+                Here's your Unseen Japan Insider piece for the week &mdash;
+                our way of saying "thanks" for being a financial supporter
+                of the site. You can find this article and all of our
+                Insider back issues on
+                <a href="https://unseen-japan.com/category/insider" target="_blank">our website</a>.
+                If you don't have an account,
+                <a href="https://unseen-japan.com/membership-registration/" target="_blank">register one here</a>,
+                then email us to link your Insider subscription.
+              </p>
+            </td>
+          </tr>
+
+
+          <!-- ════════════════════════════════════════════════
+               ARTICLE TITLE
+               ════════════════════════════════════════════════ -->
+          <tr>
+            <td class="content" style="padding: 12px 24px;">
+              <h1>{{ title }}</h1>
+            </td>
+          </tr>
+
+
+          <!-- ════════════════════════════════════════════════
+               ARTICLE BODY
+               ════════════════════════════════════════════════ -->
+          <tr>
+            <td class="content article-body" style="padding: 0 24px 24px 24px; width:100%;">
+
+              <!-- Featured image -->
+              {% if featured_image_url %}
+              <img src="{{ featured_image_url }}" alt="{{ post_title }}"
+                   width="612"
+                   style="width:100%; max-width:612px; height:auto; border-radius:4px; margin-bottom:20px;" />
+              {% endif %}
+
+              <!-- Full article content (injected from WordPress) -->
+              {{ content_html }}
+
+            </td>
+          </tr>
+
+
+          <!-- ════════════════════════════════════════════════
+               DIVIDER
+               ════════════════════════════════════════════════ -->
+          <tr>
+            <td style="padding: 0 24px;">
+              <hr style="border:0; border-top:2px solid #b3421d; margin:0;" />
+            </td>
+          </tr>
+
+
+          <!-- ════════════════════════════════════════════════
+               SIGN-OFF
+               ════════════════════════════════════════════════ -->
+          <tr>
+            <td class="content" style="padding: 24px;">
+              <p style="font-size:18px; line-height:1.5; color:#222222; margin:0;">
+                &#12414;&#12383;&#12397; (until next time)&#12289;<br />
+                Jay Allen<br />
+                Publisher, <a href="https://unseen-japan.com" target="_blank">Unseen Japan</a>
+              </p>
+            </td>
+          </tr>
+
+        </table>
+        <!-- ── /Content container ──────────────────────────── -->
+
+
+        <!-- ════════════════════════════════════════════════
+             FOOTER
+             ════════════════════════════════════════════════ -->
+        <table role="presentation" class="wrapper" width="660" cellpadding="0" cellspacing="0"
+               style="max-width:660px; width:100%;">
+          <tr>
+            <td style="padding: 24px; text-align:center; font-size:13px; line-height:1.5; color:#999999;">
+              Copyright &copy; *|CURRENT_YEAR|* *|LIST:COMPANY|*, All rights reserved.<br />
+              *|IFNOT:ARCHIVE_PAGE|*
+              *|LIST:DESCRIPTION|*<br />
+              <br />
+              <strong>Our mailing address is:</strong><br />
+              *|HTML:LIST_ADDRESS_HTML|*<br />
+              <br />
+              <a href="*|UNSUB|*" style="color:#999999;">Unsubscribe</a>
+              &nbsp;&middot;&nbsp;
+              <a href="*|UPDATE_PROFILE|*" style="color:#999999;">Update preferences</a>
+              *|END:IF|*
+            </td>
+          </tr>
+        </table>
+
+      </td>
+    </tr>
+  </table>
+  <!-- ── /OUTER WRAPPER ────────────────────────────────────── -->
+
+</body>
+</html>

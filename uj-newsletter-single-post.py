@@ -1,29 +1,29 @@
 """Create a Mailchimp newsletter draft for a single WordPress post.
 
-Sends to all subscribers using the "Insider Test" campaign as a
-formatting reference.
+Sends to all subscribers using a Jinja2 template for formatting.
 
 Usage:
     python uj-newsletter-single-post.py --post-id 88516 --title "Title" --preview "Preview"
-    python uj-newsletter-single-post.py --dump-template
+    python uj-newsletter-single-post.py --dump-html
 """
 
 import argparse
 import html as html_mod
 import os
+import re
 import sys
+from pathlib import Path
 
 import keyring
 import requests
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup
+from jinja2 import Environment, FileSystemLoader
 
 WP_SITE = "https://unseen-japan.com"
 CREDENTIAL_TARGET = "https://unseen-japan.com"
 LIST_NAME = "Unseen Japan"
-
-# Reference campaign ID — the "Insider Test" campaign whose HTML structure
-# serves as the base template for single-post newsletters.
-REFERENCE_CAMPAIGN_ID = "56c7f05f48"
+TEMPLATE_DIR = Path(__file__).parent / "templates"
+TEMPLATE_NAME = "single_post.html.j2"
 
 
 # ---------------------------------------------------------------------------
@@ -43,21 +43,131 @@ def get_wp_credentials() -> tuple[str, str]:
 
 
 def fetch_post(post_id: int, auth: tuple[str, str]) -> dict:
-    """Fetch title, link, and full rendered content for a post."""
+    """Fetch title, link, and full rendered content for a post.
+
+    First tries ``context=edit`` to get the raw Gutenberg content (which
+    bypasses any membership paywall).  Falls back to ``context=view`` if
+    the credentials lack edit access.
+    """
     url = f"{WP_SITE}/wp-json/wp/v2/posts/{post_id}"
+
+    # Try edit context first (bypasses membership plugin truncation)
     resp = requests.get(
         url,
-        params={"_fields": "title,link,content"},
+        params={"context": "edit"},
+        auth=auth,
+        timeout=30,
+    )
+    if resp.status_code == 200:
+        data = resp.json()
+        raw = data.get("content", {}).get("raw", "")
+        if raw:
+            content_html = _raw_blocks_to_html(raw)
+            return {
+                "title": html_mod.unescape(data["title"]["rendered"]),
+                "url": data["link"],
+                "content_html": content_html,
+                "featured_media": data.get("featured_media") or None,
+            }
+
+    # Fall back to view context
+    resp = requests.get(
+        url,
+        params={"_fields": "title,link,content,featured_media"},
         auth=auth,
         timeout=30,
     )
     resp.raise_for_status()
     data = resp.json()
+    content_html = _clean_rendered_html(data["content"]["rendered"])
     return {
         "title": html_mod.unescape(data["title"]["rendered"]),
         "url": data["link"],
-        "content_html": data["content"]["rendered"],
+        "content_html": content_html,
+        "featured_media": data.get("featured_media") or None,
     }
+
+
+def get_featured_image_url(
+    media_id: int, auth: tuple[str, str]
+) -> str | None:
+    """Get the source URL of a post's featured image."""
+    url = f"{WP_SITE}/wp-json/wp/v2/media/{media_id}"
+    resp = requests.get(
+        url,
+        params={"_fields": "source_url"},
+        auth=auth,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.json().get("source_url") or None
+
+
+def _raw_blocks_to_html(raw: str) -> str:
+    """Convert Gutenberg raw block content to clean HTML.
+
+    Strips ``<!-- wp:… -->`` comment markers, removes membership
+    shortcodes (``[swpm_protected …]`` / ``[/swpm_protected]``) and
+    other shortcodes, and returns the remaining HTML.
+    """
+    # Remove Gutenberg block comments
+    html = re.sub(r"<!--\s*/?wp:\S*?(?:\s+\{.*?\})?\s*-->", "", raw)
+    # Remove membership protection shortcodes (keep the content inside)
+    html = re.sub(r"\[swpm_protected[^\]]*\]", "", html)
+    html = re.sub(r"\[/swpm_protected\]", "", html)
+    # Remove other shortcodes like [elementor-template id="…"]
+    html = re.sub(r"\[elementor-template[^\]]*\]", "", html)
+    html = re.sub(r"\[[a-zA-Z_-]+[^\]]*\]", "", html)
+    return html.strip()
+
+
+def _clean_rendered_html(rendered: str) -> str:
+    """Remove Elementor shortcode output and other non-article cruft
+    from the ``context=view`` rendered content.
+    """
+    soup = BeautifulSoup(rendered, "html.parser")
+
+    # Remove Elementor template output
+    for el in soup.find_all(attrs={"data-elementor-type": True}):
+        el.decompose()
+
+    # Remove any remaining forms
+    for form in soup.find_all("form"):
+        form.decompose()
+
+    return str(soup)
+
+
+def _add_paragraph_spacing(content_html: str) -> str:
+    """Add margin and word-wrap styles to paragraphs and headings."""
+    soup = BeautifulSoup(content_html, "html.parser")
+
+    P_STYLE = (
+        'font-family:"Helvetica Neue", Helvetica, Arial, sans-serif;'
+        "font-size:18px;line-height:1.5;color:#222222;"
+        "margin:0 0 16px 0;"
+        "word-wrap:break-word;overflow-wrap:break-word;"
+    )
+
+    for p in soup.find_all("p"):
+        existing = p.get("style", "")
+        if existing:
+            p["style"] = (
+                existing.rstrip(";")
+                + ";margin:0 0 16px 0;"
+                "word-wrap:break-word;overflow-wrap:break-word;"
+            )
+        else:
+            p["style"] = P_STYLE
+
+    for h in soup.find_all(["h1", "h2", "h3", "h4"]):
+        existing = h.get("style", "")
+        h["style"] = (
+            (existing.rstrip(";") + ";" if existing else "")
+            + "word-wrap:break-word;overflow-wrap:break-word;"
+        )
+
+    return str(soup)
 
 
 # ---------------------------------------------------------------------------
@@ -107,10 +217,6 @@ class MailchimpAPI:
                 return lst
         return None
 
-    def get_campaign_content_html(self, campaign_id: str) -> str:
-        data = self._get(f"/campaigns/{campaign_id}/content")
-        return data.get("html", "")
-
     def create_campaign(
         self,
         list_id: str,
@@ -135,81 +241,25 @@ class MailchimpAPI:
 
 
 # ---------------------------------------------------------------------------
-# Template HTML manipulation
+# Newsletter HTML rendering
 # ---------------------------------------------------------------------------
 
-def _find_main_tbody(soup: BeautifulSoup) -> Tag | None:
-    """Find the main tbody containing all newsletter rows.
+def build_newsletter_html(
+    title: str,
+    post: dict,
+    featured_image_url: str | None = None,
+) -> str:
+    """Render the Jinja2 single-post template."""
+    content_html = _add_paragraph_spacing(post["content_html"])
 
-    Identified as the tbody with 5+ <tr> children.
-    """
-    for tbody in soup.find_all("tbody"):
-        trs = [c for c in tbody.children if isinstance(c, Tag) and c.name == "tr"]
-        if len(trs) >= 5:
-            return tbody
-    return None
-
-
-def build_newsletter_html(base_html: str, post: dict) -> str:
-    """Replace the title and article body in the reference campaign HTML.
-
-    The reference structure is:
-      tr[0]: "View this email in your browser"
-      tr[1]: Intro greeting text
-      tr[2]: Article title (h1 inside mceText div)
-      tr[3]: Article body (mceText div with full post content)
-      tr[4]: Divider
-      tr[5]: Sign-off
-      tr[6]: Footer
-    """
-    soup = BeautifulSoup(base_html, "html.parser")
-
-    main_tbody = _find_main_tbody(soup)
-    if main_tbody is None:
-        print("ERROR: Could not find the main content tbody.", file=sys.stderr)
-        sys.exit(1)
-
-    trs = [c for c in main_tbody.children if isinstance(c, Tag) and c.name == "tr"]
-
-    if len(trs) < 5:
-        print(
-            f"ERROR: Expected at least 5 rows, found {len(trs)}.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    # -- Replace title in tr[2] --
-    title_row = trs[2]
-    for h1 in title_row.find_all("h1"):
-        h1.string = post["title"]
-        break
-
-    # -- Replace article body in tr[3] --
-    body_row = trs[3]
-    body_div = body_row.find("div", class_="mceText")
-    if body_div is None:
-        print("ERROR: Could not find body mceText div.", file=sys.stderr)
-        sys.exit(1)
-
-    # Parse the WordPress content HTML and inject it
-    content_soup = BeautifulSoup(post["content_html"], "html.parser")
-
-    # Build a new mceText div with the article content
-    new_body = BeautifulSoup(
-        '<div class="mceText"></div>', "html.parser"
-    ).find("div")
-
-    # Preserve all original attributes (id, data-block-id, style, etc.)
-    for attr, val in body_div.attrs.items():
-        new_body[attr] = val
-
-    # Append each element from the WordPress content
-    for el in content_soup.children:
-        new_body.append(el.__copy__() if hasattr(el, "__copy__") else el)
-
-    body_div.replace_with(new_body)
-
-    return str(soup)
+    env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)))
+    template = env.get_template(TEMPLATE_NAME)
+    return template.render(
+        title=title,
+        post_title=post["title"],
+        content_html=content_html,
+        featured_image_url=featured_image_url,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -227,18 +277,36 @@ def main() -> None:
     parser.add_argument("--title", help="Newsletter title / subject line")
     parser.add_argument("--preview", help="Preview text")
     parser.add_argument(
-        "--dump-template", action="store_true",
-        help="Fetch and print the reference campaign HTML, then exit.",
+        "--dump-html", action="store_true",
+        help="Render the template with sample data and print it.",
     )
     args = parser.parse_args()
 
-    if not args.dump_template and (
+    if not args.dump_html and (
         not args.post_id or not args.title or not args.preview
     ):
         parser.error(
             "--post-id, --title, and --preview are required "
-            "(unless using --dump-template)"
+            "(unless using --dump-html)"
         )
+
+    # --dump-html mode
+    if args.dump_html:
+        sample_post = {
+            "title": "Sample Article Title",
+            "url": "https://unseen-japan.com/sample/",
+            "content_html": (
+                "<p>This is the first paragraph of the article.</p>"
+                "<h2>A section heading</h2>"
+                "<p>This is another paragraph with more detail.</p>"
+            ),
+        }
+        print(build_newsletter_html(
+            title="Sample Newsletter Title",
+            post=sample_post,
+            featured_image_url="https://via.placeholder.com/612x400",
+        ))
+        return
 
     # Init Mailchimp
     mc_api_key = os.environ.get("MAILCHIMP_API_KEY")
@@ -250,18 +318,6 @@ def main() -> None:
         sys.exit(1)
     mc = MailchimpAPI(mc_api_key)
 
-    # --dump-template mode
-    if args.dump_template:
-        html = mc.get_campaign_content_html(REFERENCE_CAMPAIGN_ID)
-        if not html:
-            print(
-                "ERROR: No HTML content in reference campaign.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        print(html)
-        return
-
     # -----------------------------------------------------------------------
     # Fetch WordPress post
     # -----------------------------------------------------------------------
@@ -272,19 +328,19 @@ def main() -> None:
     post = fetch_post(args.post_id, wp_auth)
     print(f"  Title: {post['title']}", file=sys.stderr)
 
-    # -----------------------------------------------------------------------
-    # Get reference HTML and find audience
-    # -----------------------------------------------------------------------
-    print("\nFetching reference campaign HTML...", file=sys.stderr)
-    base_html = mc.get_campaign_content_html(REFERENCE_CAMPAIGN_ID)
-    if not base_html:
-        print(
-            "ERROR: Could not fetch reference campaign HTML.",
-            file=sys.stderr,
+    # Fetch featured image URL
+    featured_image_url = None
+    if post.get("featured_media"):
+        print("  Fetching featured image...", file=sys.stderr)
+        featured_image_url = get_featured_image_url(
+            post["featured_media"], wp_auth
         )
-        sys.exit(1)
-    print(f"  Reference HTML: {len(base_html)} chars", file=sys.stderr)
+        if featured_image_url:
+            print(f"  Image: {featured_image_url}", file=sys.stderr)
 
+    # -----------------------------------------------------------------------
+    # Find audience
+    # -----------------------------------------------------------------------
     audience = mc.find_list(LIST_NAME)
     if not audience:
         print(f"ERROR: List '{LIST_NAME}' not found.", file=sys.stderr)
@@ -298,7 +354,11 @@ def main() -> None:
     # Build newsletter HTML
     # -----------------------------------------------------------------------
     print("\nBuilding newsletter HTML...", file=sys.stderr)
-    newsletter_html = build_newsletter_html(base_html, post)
+    newsletter_html = build_newsletter_html(
+        title=args.title,
+        post=post,
+        featured_image_url=featured_image_url,
+    )
 
     # -----------------------------------------------------------------------
     # Create campaign
