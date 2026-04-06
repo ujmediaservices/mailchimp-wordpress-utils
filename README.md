@@ -1,4 +1,4 @@
-A simple set of utilities for generating Mailchimp emails for a WordPress website. Primarily intended for use with Unseen-Japan.com, but can be used with any WordPress website. 
+A simple set of utilities for generating Mailchimp emails for a WordPress website. Originally built for use with Unseen-Japan.com, but can be used with any WordPress website. 
 
 Each utility uses Jinja2 templating for the email formatting. This makes it easy to make changes to the core template. The HTML code is clean, making it simple to modify in the Mailchimp editor if you want to add custom content to a specific campaign.
 
