@@ -4,7 +4,7 @@ Each utility uses Jinja2 templating for the email formatting. This makes it easy
 
 ## Requirements
 
-WORDPRESS_URL, WORDPRESS_USERNAME, and WORDPRESS_PASSWORD are set as environment variables. Password should be an [Application Password]([url](https://developer.wordpress.org/advanced-administration/security/application-passwords/)), or the scripts will be unable to access protected website content (e.g., paywalled content). 
+WORDPRESS_URL, WORDPRESS_USERNAME, and WORDPRESS_PASSWORD are set as environment variables. Password should be an [Application Password](https://developer.wordpress.org/advanced-administration/security/application-passwords/), or the scripts will be unable to access protected website content (e.g., paywalled content). 
 
 ## newsletter-free.py
 
