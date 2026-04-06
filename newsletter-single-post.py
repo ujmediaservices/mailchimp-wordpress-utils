@@ -14,13 +14,11 @@ import re
 import sys
 from pathlib import Path
 
-import keyring
 import requests
 from bs4 import BeautifulSoup
 from jinja2 import Environment, FileSystemLoader
 
 WP_SITE = "https://unseen-japan.com"
-CREDENTIAL_TARGET = "https://unseen-japan.com"
 LIST_NAME = "Unseen Japan"
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 TEMPLATE_NAME = "single_post.html.j2"
@@ -31,15 +29,16 @@ TEMPLATE_NAME = "single_post.html.j2"
 # ---------------------------------------------------------------------------
 
 def get_wp_credentials() -> tuple[str, str]:
-    cred = keyring.get_credential(CREDENTIAL_TARGET, None)
-    if cred is None:
+    username = os.environ.get("WORDPRESS_USERNAME")
+    password = os.environ.get("WORDPRESS_PASSWORD")
+    if not username or not password:
         print(
-            f"No credential found in Windows Credential Manager "
-            f"for '{CREDENTIAL_TARGET}'.",
+            "ERROR: WORDPRESS_USERNAME and WORDPRESS_PASSWORD "
+            "environment variables must be set.",
             file=sys.stderr,
         )
         sys.exit(1)
-    return cred.username, cred.password
+    return username, password
 
 
 def fetch_post(post_id: int, auth: tuple[str, str]) -> dict:
