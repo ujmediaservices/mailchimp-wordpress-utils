@@ -18,7 +18,6 @@ import requests
 from bs4 import BeautifulSoup
 from jinja2 import Environment, FileSystemLoader
 
-WP_SITE = "https://unseen-japan.com"
 LIST_NAME = "Unseen Japan"
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 TEMPLATE_NAME = "single_post.html.j2"
@@ -28,27 +27,31 @@ TEMPLATE_NAME = "single_post.html.j2"
 # WordPress helpers
 # ---------------------------------------------------------------------------
 
-def get_wp_credentials() -> tuple[str, str]:
+def get_wp_config() -> tuple[str, tuple[str, str]]:
+    """Return (site_url, (username, password)) from environment variables."""
+    wp_url = os.environ.get("WORDPRESS_URL")
     username = os.environ.get("WORDPRESS_USERNAME")
     password = os.environ.get("WORDPRESS_PASSWORD")
-    if not username or not password:
+    if not wp_url or not username or not password:
         print(
-            "ERROR: WORDPRESS_USERNAME and WORDPRESS_PASSWORD "
-            "environment variables must be set.",
+            "ERROR: WORDPRESS_URL, WORDPRESS_USERNAME, and "
+            "WORDPRESS_PASSWORD environment variables must be set.",
             file=sys.stderr,
         )
         sys.exit(1)
-    return username, password
+    return wp_url.rstrip("/"), (username, password)
 
 
-def fetch_post(post_id: int, auth: tuple[str, str]) -> dict:
+def fetch_post(
+    wp_site: str, post_id: int, auth: tuple[str, str]
+) -> dict:
     """Fetch title, link, and full rendered content for a post.
 
     First tries ``context=edit`` to get the raw Gutenberg content (which
     bypasses any membership paywall).  Falls back to ``context=view`` if
     the credentials lack edit access.
     """
-    url = f"{WP_SITE}/wp-json/wp/v2/posts/{post_id}"
+    url = f"{wp_site}/wp-json/wp/v2/posts/{post_id}"
 
     # Try edit context first (bypasses membership plugin truncation)
     resp = requests.get(
@@ -88,10 +91,10 @@ def fetch_post(post_id: int, auth: tuple[str, str]) -> dict:
 
 
 def get_featured_image_url(
-    media_id: int, auth: tuple[str, str]
+    wp_site: str, media_id: int, auth: tuple[str, str]
 ) -> str | None:
     """Get the source URL of a post's featured image."""
-    url = f"{WP_SITE}/wp-json/wp/v2/media/{media_id}"
+    url = f"{wp_site}/wp-json/wp/v2/media/{media_id}"
     resp = requests.get(
         url,
         params={"_fields": "source_url"},
@@ -321,10 +324,10 @@ def main() -> None:
     # Fetch WordPress post
     # -----------------------------------------------------------------------
     print("Fetching WordPress credentials...", file=sys.stderr)
-    wp_auth = get_wp_credentials()
+    wp_site, wp_auth = get_wp_config()
 
     print(f"  Fetching post {args.post_id}...", file=sys.stderr)
-    post = fetch_post(args.post_id, wp_auth)
+    post = fetch_post(wp_site, args.post_id, wp_auth)
     print(f"  Title: {post['title']}", file=sys.stderr)
 
     # Fetch featured image URL
@@ -332,7 +335,7 @@ def main() -> None:
     if post.get("featured_media"):
         print("  Fetching featured image...", file=sys.stderr)
         featured_image_url = get_featured_image_url(
-            post["featured_media"], wp_auth
+            wp_site, post["featured_media"], wp_auth
         )
         if featured_image_url:
             print(f"  Image: {featured_image_url}", file=sys.stderr)

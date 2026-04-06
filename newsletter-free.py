@@ -18,7 +18,6 @@ import requests
 from bs4 import BeautifulSoup
 from jinja2 import Environment, FileSystemLoader
 
-WP_SITE = "https://unseen-japan.com"
 LIST_NAME = "Unseen Japan"
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 TEMPLATE_NAME = "free_newsletter.html.j2"
@@ -28,22 +27,26 @@ TEMPLATE_NAME = "free_newsletter.html.j2"
 # WordPress helpers
 # ---------------------------------------------------------------------------
 
-def get_wp_credentials() -> tuple[str, str]:
+def get_wp_config() -> tuple[str, tuple[str, str]]:
+    """Return (site_url, (username, password)) from environment variables."""
+    wp_url = os.environ.get("WORDPRESS_URL")
     username = os.environ.get("WORDPRESS_USERNAME")
     password = os.environ.get("WORDPRESS_PASSWORD")
-    if not username or not password:
+    if not wp_url or not username or not password:
         print(
-            "ERROR: WORDPRESS_USERNAME and WORDPRESS_PASSWORD "
-            "environment variables must be set.",
+            "ERROR: WORDPRESS_URL, WORDPRESS_USERNAME, and "
+            "WORDPRESS_PASSWORD environment variables must be set.",
             file=sys.stderr,
         )
         sys.exit(1)
-    return username, password
+    return wp_url.rstrip("/"), (username, password)
 
 
-def fetch_post_data(post_id: int, auth: tuple[str, str]) -> dict:
+def fetch_post_data(
+    wp_site: str, post_id: int, auth: tuple[str, str]
+) -> dict:
     """Fetch title, link, excerpt, and featured_media ID for a post."""
-    url = f"{WP_SITE}/wp-json/wp/v2/posts/{post_id}"
+    url = f"{wp_site}/wp-json/wp/v2/posts/{post_id}"
     resp = requests.get(
         url,
         params={"_fields": "title,link,excerpt,featured_media"},
@@ -65,9 +68,9 @@ def fetch_post_data(post_id: int, auth: tuple[str, str]) -> dict:
 
 
 def get_featured_image_url(
-    media_id: int, auth: tuple[str, str]
+    wp_site: str, media_id: int, auth: tuple[str, str]
 ) -> str | None:
-    url = f"{WP_SITE}/wp-json/wp/v2/media/{media_id}"
+    url = f"{wp_site}/wp-json/wp/v2/media/{media_id}"
     resp = requests.get(
         url,
         params={"_fields": "source_url"},
@@ -244,7 +247,7 @@ def main() -> None:
     # Fetch WordPress post data
     # -----------------------------------------------------------------------
     print("Fetching WordPress credentials...", file=sys.stderr)
-    wp_auth = get_wp_credentials()
+    wp_site, wp_auth = get_wp_config()
 
     posts_data: list[dict] = []
     temp_dir = tempfile.mkdtemp(prefix="uj_newsletter_")
@@ -253,7 +256,7 @@ def main() -> None:
     for post_id in args.posts:
         print(f"  Fetching post {post_id}...", file=sys.stderr)
         try:
-            post = fetch_post_data(post_id, wp_auth)
+            post = fetch_post_data(wp_site, post_id, wp_auth)
         except requests.exceptions.HTTPError as e:
             print(
                 f"  WARNING: Failed to fetch post {post_id}: {e}",
@@ -267,7 +270,7 @@ def main() -> None:
         if post["featured_media"]:
             print("  Fetching featured image...", file=sys.stderr)
             image_url = get_featured_image_url(
-                post["featured_media"], wp_auth
+                wp_site, post["featured_media"], wp_auth
             )
             if image_url:
                 image_path = download_image(image_url, wp_auth, temp_dir)
