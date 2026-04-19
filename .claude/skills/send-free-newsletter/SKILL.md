@@ -1,6 +1,6 @@
 ---
 name: send-free-newsletter
-description: Draft and send the Unseen Japan free newsletter from a list of WordPress post IDs. Suggests a subject line and preview text from the posts, confirms with the user, then runs newsletter-free.py to create the Mailchimp draft. Use when the user asks to send/draft/build the free newsletter, or provides a list of post IDs for the free list.
+description: Draft and send the Unseen Japan free newsletter. Accepts a list of WordPress post IDs, or fetches the 12 most recent posts for selection if none are provided. Suggests a subject line and preview text from the posts, confirms with the user, then runs newsletter-free.py to create the Mailchimp draft. Use when the user asks to send/draft/build the free newsletter.
 ---
 
 # Send free newsletter
@@ -12,8 +12,30 @@ You are drafting the weekly free newsletter for Unseen Japan. The user will give
 Expect one of these shapes:
 - A space- or comma-separated list of numeric post IDs (e.g. `88520 88516 88486` or `88520, 88516, 88486`).
 - The lead post ID called out as "lead" or listed first, with the rest as follow-ups.
+- **No list at all.** In that case, fetch the 12 most recent posts and show them to the user for selection (see "No post list provided" below), then stop and wait for the user to pick.
 
 If the user gave fewer than 3 IDs or anything ambiguous, ask before proceeding.
+
+## No post list provided
+
+If the user invoked the skill without specifying posts, fetch the 12 latest published posts from WordPress, most-recent first, and print each as `ID | Title`. Then stop — do not proceed to steps 1–5 until the user picks which posts to include.
+
+```bash
+python -c "
+import os, requests, html
+base = os.environ['WORDPRESS_URL'].rstrip('/')
+auth = (os.environ['WORDPRESS_USERNAME'], os.environ['WORDPRESS_PASSWORD'])
+r = requests.get(f'{base}/wp-json/wp/v2/posts',
+                 params={'_fields': 'id,title,date', 'per_page': 12,
+                         'orderby': 'date', 'order': 'desc', 'status': 'publish'},
+                 auth=auth, timeout=30)
+r.raise_for_status()
+for p in r.json():
+    print(p['id'], '|', html.unescape(p['title']['rendered']))
+"
+```
+
+Present the list, then ask the user which posts to include (and which is the lead). Once they reply, continue from step 1 with those IDs.
 
 ## Steps
 
