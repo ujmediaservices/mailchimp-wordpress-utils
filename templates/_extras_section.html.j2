@@ -1,0 +1,51 @@
+{# "Also from Japan this week" section. Included from both newsletter-free
+   and single_post templates. Renders nothing when extras is empty. #}
+{% if extras %}
+<tr>
+  <td style="padding: 0 24px;">
+    <hr style="border:0; border-top:2px solid #b3421d; margin:24px 0 0 0;" />
+  </td>
+</tr>
+
+<tr>
+  <td class="content" style="padding: 12px 24px;">
+    <a name="extras"></a>
+    <h2 style="margin: 0 0 8px 0;">Also from Japan this week</h2>
+    <p style="font-size: 18px; line-height: 1.5; color: #222222; margin: 0 0 20px 0;">
+      Here's some other UJ-style news that we haven't covered here or on social media.
+    </p>
+
+    {% for extra in extras %}
+    <a name="extra-{{ loop.index }}"></a>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom: 16px;">
+      <tr>
+        <td>
+          {% if extra.source %}
+          <p style="font-size: 13px; color: #666666; margin: 0 0 4px 0; text-transform: uppercase; letter-spacing: 0.5px; font-weight: bold;">
+            {{ extra.source }}
+          </p>
+          {% endif %}
+          <h3 style="font-size: 20px; font-weight: bold; color: #b3421d; margin: 0 0 8px 0; line-height: 1.3;">
+            <a href="{{ extra.url }}" target="_blank" style="color: #b3421d; text-decoration: none;">
+              {{ extra.title_en }}
+            </a>
+          </h3>
+          {% if extra.synopsis %}
+          <p style="font-size: 16px; line-height: 1.5; color: #222222; margin: 0 0 8px 0;">
+            {{ extra.synopsis }}
+          </p>
+          {% endif %}
+          <p style="font-size: 14px; margin: 0;">
+            <a href="{{ extra.url }}" target="_blank" style="color: #b3421d;">Read at {{ extra.source or 'source' }} (Japanese) &rarr;</a>
+          </p>
+        </td>
+      </tr>
+    </table>
+
+    {% if not loop.last %}
+    <hr style="border:0; border-top:1px solid #e0e0e0; margin: 0 0 16px 0;" />
+    {% endif %}
+    {% endfor %}
+  </td>
+</tr>
+{% endif %}

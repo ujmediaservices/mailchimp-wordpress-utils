@@ -79,6 +79,27 @@
             </td>
           </tr>
 
+          {% if extras %}
+          <!-- ════════════════════════════════════════════════
+               TOP TEASER: jump-links to "Also from Japan this week"
+               ════════════════════════════════════════════════ -->
+          <tr>
+            <td class="content" style="padding: 12px 24px; background-color: #ffffff; border-bottom: 1px solid #e0e0e0;">
+              <p style="font-size: 13px; color: #666666; margin: 0 0 8px 0; text-transform: uppercase; letter-spacing: 0.5px; font-weight: bold;">
+                Other news we're tracking this week
+              </p>
+              <ul style="margin: 0 0 4px 0; padding-left: 20px; font-size: 16px; line-height: 1.5; color: #222222;">
+                {% for extra in extras %}
+                <li style="margin-bottom: 4px;">
+                  <a href="#extra-{{ loop.index }}" style="color: #b3421d; text-decoration: underline;">{{ extra.title_en }}</a>
+                  {% if extra.source %}<span style="color: #666666;"> &mdash; {{ extra.source }}</span>{% endif %}
+                </li>
+                {% endfor %}
+              </ul>
+            </td>
+          </tr>
+          {% endif %}
+
           <!-- Section heading -->
           <tr>
             <td class="content" style="padding: 12px 24px;">
@@ -112,7 +133,7 @@
 
               <!-- Excerpt -->
               <p style="font-size:18px; line-height:1.5; color:#222222; margin:0 0 20px 0;">
-                {{ post.excerpt }}
+                {{ post.excerpt | safe }}
               </p>
 
               <!-- Read more button -->
@@ -142,6 +163,9 @@
           {% endif %}
           {% endfor %}
 
+
+          {# "Also from Japan this week" section #}
+          {% include '_extras_section.html.j2' %}
 
           <!-- ════════════════════════════════════════════════
                INSIDER UPGRADE CTA

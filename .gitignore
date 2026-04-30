@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.env
+.claude/settings.local.json
+.claude/skills/send-free-newsletter/last-posts.json
+tmp/

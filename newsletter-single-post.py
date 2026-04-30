@@ -8,15 +8,20 @@ Usage:
 """
 
 import argparse
+import base64
 import html as html_mod
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
 from jinja2 import Environment, FileSystemLoader
+
+import extras as extras_mod
 
 LIST_NAME = "Unseen Japan"
 TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -105,6 +110,44 @@ def get_featured_image_url(
     return resp.json().get("source_url") or None
 
 
+def fetch_also_post(
+    wp_site: str, post_id: int, auth: tuple[str, str]
+) -> dict:
+    """Fetch the title, link, excerpt, and featured_media for one
+    also-on-UJ post (lightweight — used for the recap section)."""
+    url = f"{wp_site}/wp-json/wp/v2/posts/{post_id}"
+    resp = requests.get(
+        url,
+        params={"_fields": "title,link,excerpt,featured_media"},
+        auth=auth,
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    excerpt_text = BeautifulSoup(
+        data.get("excerpt", {}).get("rendered", ""), "html.parser",
+    ).get_text(strip=True)
+    return {
+        "post_id": post_id,
+        "title": html_mod.unescape(data["title"]["rendered"]),
+        "url": data["link"],
+        "excerpt": html_mod.unescape(excerpt_text),
+        "featured_media": data.get("featured_media") or None,
+    }
+
+
+def download_image(
+    image_url: str, auth: tuple[str, str], temp_dir: str,
+) -> Path:
+    """Download an image to temp_dir and return the local path."""
+    filename = Path(urlparse(image_url).path).name
+    local_path = Path(temp_dir) / filename
+    resp = requests.get(image_url, auth=auth, timeout=60)
+    resp.raise_for_status()
+    local_path.write_bytes(resp.content)
+    return local_path
+
+
 def _raw_blocks_to_html(raw: str) -> str:
     """Convert Gutenberg raw block content to clean HTML.
 
@@ -140,8 +183,14 @@ def _clean_rendered_html(rendered: str) -> str:
     return str(soup)
 
 
-def _add_paragraph_spacing(content_html: str) -> str:
-    """Add margin and word-wrap styles to paragraphs and headings."""
+def _add_paragraph_spacing(
+    content_html: str,
+    wp_site: str | None = None,
+    wp_auth: tuple[str, str] | None = None,
+) -> str:
+    """Add margin/word-wrap styles to paragraphs and headings, and cap
+    inline image widths at the 612px article body so large images scale
+    down (without upscaling small ones)."""
     soup = BeautifulSoup(content_html, "html.parser")
 
     P_STYLE = (
@@ -167,6 +216,65 @@ def _add_paragraph_spacing(content_html: str) -> str:
         h["style"] = (
             (existing.rstrip(";") + ";" if existing else "")
             + "word-wrap:break-word;overflow-wrap:break-word;"
+        )
+
+    MAX_BODY_WIDTH = 612
+    media_width_cache: dict[int, int | None] = {}
+
+    def _natural_width(img) -> int | None:
+        # 1) Existing width attribute
+        try:
+            w = int(img.get("width", "0"))
+            if w > 0:
+                return w
+        except (TypeError, ValueError):
+            pass
+        # 2) URL size suffix like -1024x760.png
+        src = img.get("src", "")
+        m = re.search(r"-(\d+)x\d+\.[a-zA-Z]+(?:[?#]|$)", src)
+        if m:
+            return int(m.group(1))
+        # 3) WordPress wp-image-{id} class -> media API lookup
+        if wp_site and wp_auth:
+            cls = img.get("class", "")
+            if isinstance(cls, list):
+                cls = " ".join(cls)
+            m = re.search(r"wp-image-(\d+)", cls)
+            if m:
+                media_id = int(m.group(1))
+                if media_id not in media_width_cache:
+                    try:
+                        r = requests.get(
+                            f"{wp_site}/wp-json/wp/v2/media/{media_id}",
+                            params={"_fields": "media_details"},
+                            auth=wp_auth, timeout=15,
+                        )
+                        if r.ok:
+                            media_width_cache[media_id] = (
+                                r.json().get("media_details", {}).get("width")
+                            )
+                        else:
+                            media_width_cache[media_id] = None
+                    except requests.RequestException:
+                        media_width_cache[media_id] = None
+                return media_width_cache[media_id]
+        return None
+
+    for img in soup.find_all("img"):
+        natural_w = _natural_width(img)
+        if natural_w is None:
+            # Unknown — don't force a width; rely on max-width style.
+            img.attrs.pop("width", None)
+        elif natural_w > MAX_BODY_WIDTH:
+            img["width"] = str(MAX_BODY_WIDTH)
+        else:
+            img["width"] = str(natural_w)
+        # Drop fixed height so aspect ratio is preserved.
+        img.attrs.pop("height", None)
+        existing = img.get("style", "")
+        img["style"] = (
+            (existing.rstrip(";") + ";" if existing else "")
+            + "max-width:100%;height:auto;display:block;margin:0 auto;"
         )
 
     return str(soup)
@@ -219,6 +327,16 @@ class MailchimpAPI:
                 return lst
         return None
 
+    def upload_image(self, filename: str, image_bytes: bytes) -> str:
+        """Upload an image to the Mailchimp file manager so newsletter
+        embeds resolve from Mailchimp's CDN. Returns the hosted URL."""
+        encoded = base64.b64encode(image_bytes).decode("ascii")
+        data = self._post("/file-manager/files", {
+            "name": filename,
+            "file_data": encoded,
+        })
+        return data["full_size_url"]
+
     def create_campaign(
         self,
         list_id: str,
@@ -250,9 +368,25 @@ def build_newsletter_html(
     title: str,
     post: dict,
     featured_image_url: str | None = None,
+    wp_site: str | None = None,
+    wp_auth: tuple[str, str] | None = None,
+    also_posts: list[dict] | None = None,
+    extras: list[dict] | None = None,
 ) -> str:
-    """Render the Jinja2 single-post template."""
-    content_html = _add_paragraph_spacing(post["content_html"])
+    """Render the Jinja2 single-post template.
+
+    Pass ``wp_site``/``wp_auth`` so inline images can have their natural
+    widths resolved via the WordPress media API when the embedded markup
+    doesn't carry a width attribute or size-suffixed URL.
+
+    ``also_posts`` is an optional list of dicts (``title``, ``url``,
+    ``excerpt``, ``image_url``) rendered as an "Also on UJ" recap section
+    after the main article. ``extras`` is the parallel "Also from Japan
+    this week" section sourced from the /find-content trend log.
+    """
+    content_html = _add_paragraph_spacing(
+        post["content_html"], wp_site=wp_site, wp_auth=wp_auth,
+    )
 
     env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)))
     template = env.get_template(TEMPLATE_NAME)
@@ -261,6 +395,8 @@ def build_newsletter_html(
         post_title=post["title"],
         content_html=content_html,
         featured_image_url=featured_image_url,
+        also_posts=also_posts or [],
+        extras=extras or [],
     )
 
 
@@ -279,9 +415,17 @@ def main() -> None:
     parser.add_argument("--title", help="Newsletter title / subject line")
     parser.add_argument("--preview", help="Preview text")
     parser.add_argument(
+        "--also-posts", nargs="*", type=int, default=[],
+        help=(
+            "Optional list of WordPress post IDs to render as an "
+            '"Also on UJ" recap section after the main article.'
+        ),
+    )
+    parser.add_argument(
         "--dump-html", action="store_true",
         help="Render the template with sample data and print it.",
     )
+    extras_mod.add_extras_cli_args(parser)
     args = parser.parse_args()
 
     if not args.dump_html and (
@@ -307,6 +451,7 @@ def main() -> None:
             title="Sample Newsletter Title",
             post=sample_post,
             featured_image_url="https://via.placeholder.com/612x400",
+            extras=extras_mod.SAMPLE_EXTRAS,
         ))
         return
 
@@ -355,11 +500,91 @@ def main() -> None:
     # -----------------------------------------------------------------------
     # Build newsletter HTML
     # -----------------------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # Fetch "Also on UJ" recap posts (optional)
+    # -----------------------------------------------------------------------
+    also_posts: list[dict] = []
+    if args.also_posts:
+        print(
+            f"\nFetching {len(args.also_posts)} also-on-UJ post(s)...",
+            file=sys.stderr,
+        )
+        temp_dir = tempfile.mkdtemp(prefix="uj_also_")
+        for pid in args.also_posts:
+            print(f"  Fetching post {pid}...", file=sys.stderr)
+            try:
+                ap = fetch_also_post(wp_site, pid, wp_auth)
+            except requests.exceptions.HTTPError as exc:
+                print(
+                    f"  WARNING: failed to fetch also-post {pid}: {exc}",
+                    file=sys.stderr,
+                )
+                continue
+
+            image_url = None
+            if ap["featured_media"]:
+                wp_image_url = get_featured_image_url(
+                    wp_site, ap["featured_media"], wp_auth,
+                )
+                if wp_image_url:
+                    try:
+                        local_path = download_image(
+                            wp_image_url, wp_auth, temp_dir,
+                        )
+                        mc_filename = (
+                            f"newsletter-{pid}-{local_path.name}"
+                        )
+                        image_url = mc.upload_image(
+                            mc_filename, local_path.read_bytes(),
+                        )
+                        print(
+                            f"  Uploaded image: {mc_filename}",
+                            file=sys.stderr,
+                        )
+                    except (
+                        requests.exceptions.HTTPError,
+                        requests.exceptions.RequestException,
+                    ) as exc:
+                        print(
+                            f"  WARNING: image upload failed for {pid}: "
+                            f"{exc} (falling back to WP URL)",
+                            file=sys.stderr,
+                        )
+                        image_url = wp_image_url
+
+            also_posts.append({
+                "post_id": pid,
+                "title": ap["title"],
+                "url": ap["url"],
+                "excerpt": ap["excerpt"],
+                "image_url": image_url or "",
+            })
+
+    # -----------------------------------------------------------------------
+    # Resolve "Also from Japan this week" extras
+    # -----------------------------------------------------------------------
+    # Cited-URL detection runs against the main post body and any also-posts
+    # bodies, so we don't tease a story we already wrote up or linked to.
+    extras_post_ids = [args.post_id] + list(args.also_posts)
+    extras_post_urls = [post["url"]] + [ap["url"] for ap in also_posts]
+    extras = extras_mod.resolve_extras(
+        args,
+        wp_site=wp_site,
+        wp_auth=wp_auth,
+        post_ids=extras_post_ids,
+        post_urls=extras_post_urls,
+        log=lambda msg: print(msg, file=sys.stderr),
+    )
+
     print("\nBuilding newsletter HTML...", file=sys.stderr)
     newsletter_html = build_newsletter_html(
         title=args.title,
         post=post,
         featured_image_url=featured_image_url,
+        wp_site=wp_site,
+        wp_auth=wp_auth,
+        also_posts=also_posts,
+        extras=extras,
     )
 
     # -----------------------------------------------------------------------

@@ -6,6 +6,19 @@ Each utility uses Jinja2 templating for the email formatting. This makes it easy
 
 Since this is Python, it can theoretically run anywhere. I run it locally but you can also set it up as a scheduled job to run, e.g., automatically every week.
 
+## Claude Code skill: `/send-free-newsletter`
+
+The recommended way to draft the weekly free newsletter. Pass a list of post IDs (or letters from a candidate list) and the skill proposes a subject line + preview text, confirms with you, then runs `newsletter-free.py` to create the Mailchimp draft. Tracks the IDs used in the last newsletter so they're filtered out next time.
+
+```
+/send-free-newsletter 88520 88516 88486 88530 88463 88432 88444
+/send-free-newsletter            # no args: shows the 12 most recent posts and waits for your selection
+```
+
+By convention, the **third post in your list is the lead** — the skill uses it for the subject line and preview text. Override with "make X the lead" in the same message.
+
+See [`.claude/skills/send-free-newsletter/SKILL.md`](.claude/skills/send-free-newsletter/SKILL.md) for the full workflow.
+
 ## Requirements
 
 WORDPRESS_URL, WORDPRESS_USERNAME, and WORDPRESS_PASSWORD are set as environment variables. Password should be an [Application Password](https://developer.wordpress.org/advanced-administration/security/application-passwords/), or the scripts will be unable to access protected website content (e.g., paywalled content). 
@@ -17,6 +30,22 @@ Sends a newsletter consisting of the list of posts referenced by their WordPress
 ```python
 python newsletter-free.py --title "Japan can't agree what this soda tastes like" --preview "Also on UJ: No phoning while eating ramen, sandwich theft jail time, Nara's deer are moving" --posts 88520 88516 88486 88530 88463 88432 88444
 ```
+
+### "Also from Japan this week"
+
+Append a section of external stories that UJ noticed but didn't cover, sourced from the `/find-content` skill's trend log. A jump-link teaser at the top of the email lets readers click straight to a specific story below.
+
+```python
+python newsletter-free.py \
+  --title "..." --preview "..." --posts 88520 88516 \
+  --extras-from-trend-log \
+  --extras-days 7 --extras-cap 4 \
+  --extras-exclude "https://www.asahi.com/articles/already-on-bluesky"
+```
+
+Filters: only HIGH and VERY HIGH observations within the lookback window; URLs already cited in any covered post's body are dropped automatically; pass `--extras-exclude URL` (repeatable) to drop stories already shared on social. Use `--extras-json path.json` to bypass the trend log and supply hand-curated entries (a list of objects with `url`, `title_en`, `source`, `synopsis`, `topics`).
+
+The trend log path defaults to `G:/My Drive/Unseen Japan/Code/find-content/trends/observations.ndjson` (override with `--extras-log-path` or the `FIND_CONTENT_TREND_LOG` env var). When extras are enabled but nothing matches the filter, the section is silently omitted.
 
 ## newsletter-single-post.py
 
