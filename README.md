@@ -47,6 +47,40 @@ Filters: only HIGH and VERY HIGH observations within the lookback window; URLs a
 
 The trend log path defaults to `G:/My Drive/Unseen Japan/Code/find-content/trends/observations.ndjson` (override with `--extras-log-path` or the `FIND_CONTENT_TREND_LOG` env var). When extras are enabled but nothing matches the filter, the section is silently omitted.
 
+## newsletter-oneoff.py
+
+Send a one-off newsletter written entirely in a markdown file. The frontmatter
+holds the subject and preview text; the body is your content.
+
+```python
+python newsletter-oneoff.py path/to/draft.md
+python newsletter-oneoff.py path/to/draft.md --dump-html   # preview locally
+python newsletter-oneoff.py path/to/draft.md --subject "Override"
+```
+
+Frontmatter fields (all optional unless noted):
+
+```markdown
+---
+subject:    "Email subject line"        # required
+preview:    "Inbox preview text"        # required
+title:      "Internal Mailchimp title"  # defaults to subject
+signoff:    true                        # adds the "Jay Allen / UJ" block
+from_name:  "Jay at Unseen Japan"
+reply_to:   "jay@unseenjapan.com"
+audience:   "Unseen Japan"
+segment_id: 12345
+---
+
+Body in markdown here. Headings, **bold**, lists, blockquotes,
+[links](https://...), and `![alt](https://...)` images all work.
+```
+
+See [`templates/newsletter-oneoff.example.md`](templates/newsletter-oneoff.example.md)
+for a working example.
+
+Images must be hosted at a public URL. The script does not upload local images.
+
 ## newsletter-single-post.py
 
 Sends a single post via Mailchimp. Can be used with membership plugins such as Simple Membership Pro. Will specifically strip out Simple Membership Pro shortcodes from posts.  

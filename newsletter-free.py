@@ -20,6 +20,7 @@ from bs4 import BeautifulSoup
 from jinja2 import Environment, FileSystemLoader
 
 import extras as extras_mod
+import inserts as inserts_mod
 
 LIST_NAME = "Unseen Japan"
 TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -28,14 +29,29 @@ DEFAULT_TEMPLATE = "newsletter-free"
 INSIDER_BLURB = (
     '<br /><br />'
     '<a href="https://unseen-japan.com/subscribe">Upgrade to our Insider '
-    'newsletter</a> to get access to this and over 50+ articles exclusively '
-    'for our supporters! You can also '
-    '<a href="https://unseenjapan.substack.com">subscribe to us on Substack</a>.'
+    'newsletter</a> to get access to this and <a href="https://unseen-=japan.com/insider">all members-only content</a>. '
+    "Plus, you'll get ad-free website access - over eight years of "
+    'Japan coverage, distraction-free.'
 )
 
 
 def is_insider_post(title: str) -> bool:
     return "[insider]" in title.lower()
+
+
+_BANNED_DASH_RE = re.compile(
+    r"—|–|&mdash;|&ndash;|&#8212;|&#x2014;|&#8211;|&#x2013;"
+)
+
+
+def strip_banned_dashes(text: str) -> str:
+    """Replace em/en dashes (and their HTML entity forms) with commas.
+
+    Absolute editorial rule: em and en dashes are banned anywhere in the
+    rendered newsletter. WordPress content frequently contains them, so we
+    normalize after fetching. See SKILL.md "NEVER use em dashes" section.
+    """
+    return _BANNED_DASH_RE.sub(",", text)
 
 
 # ---------------------------------------------------------------------------
@@ -116,9 +132,9 @@ def fetch_post_data(
         )
 
     return {
-        "title": html_mod.unescape(data["title"]["rendered"]),
+        "title": strip_banned_dashes(html_mod.unescape(data["title"]["rendered"])),
         "url": data["link"],
-        "excerpt": html_mod.unescape(excerpt_text),
+        "excerpt": strip_banned_dashes(html_mod.unescape(excerpt_text)),
         "featured_media": data.get("featured_media") or None,
     }
 
@@ -240,12 +256,16 @@ class MailchimpAPI:
 # ---------------------------------------------------------------------------
 
 def build_newsletter_html(
-    posts: list[dict], template_name: str, extras: list[dict] | None = None
+    posts: list[dict], template_name: str, extras: list[dict] | None = None,
+    reader_intro: bool = False, inserts: dict[int, str] | None = None,
 ) -> str:
     """Render the Jinja2 newsletter template with the given posts."""
     env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)))
     template = env.get_template(f"{template_name}.html.j2")
-    return template.render(posts=posts, extras=extras or [])
+    return template.render(
+        posts=posts, extras=extras or [], reader_intro=reader_intro,
+        inserts=inserts or {},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +301,35 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--reader-intro", action="store_true",
+        help=(
+            "Insert a 'Hello Loyal UJ Reader,' placeholder block at the top "
+            "of the email body for a hand-written personal note. The block "
+            "contains a stub paragraph that the editor replaces in Mailchimp "
+            "before sending."
+        ),
+    )
+    parser.add_argument(
+        "--no-insider-blurb", action="store_true",
+        help=(
+            "Suppress the auto-appended Insider paywall/upgrade blurb on "
+            "[Insider]-titled posts. Use when an embedded insert (e.g. a "
+            "tours promo) is the week's CTA and the standard Insider "
+            "upgrade pitch would compete with it."
+        ),
+    )
+    parser.add_argument(
+        "--insert", action="append", default=[], metavar="PATH:POS",
+        help=(
+            "Embed a Markdown insert AFTER the given post position "
+            "(1-indexed). Example: --insert inserts/tours-unique.md:3 places "
+            "the insert between posts 3 and 4. Repeatable for multiple "
+            "inserts. Supported Markdown: image, ## heading, paragraphs with "
+            "[text](url) links, and {{URL Button Text}} which renders as a "
+            "newsletter-style button."
+        ),
+    )
+    parser.add_argument(
         "--dump-html", action="store_true",
         help="Render the template with sample data and print it.",
     )
@@ -297,14 +346,22 @@ def main() -> None:
 
     # --dump-html mode
     if args.dump_html:
-        sample_posts = [{
-            "title": "Sample Post Title",
-            "url": "https://unseen-japan.com/sample/",
-            "image_url": "https://via.placeholder.com/628x400",
-            "excerpt": "This is a sample excerpt for template preview.",
-        }]
+        sample_posts = [
+            {
+                "title": f"Sample Post {i}",
+                "url": f"https://unseen-japan.com/sample-{i}/",
+                "image_url": "https://via.placeholder.com/628x400",
+                "excerpt": f"Sample excerpt for post {i}.",
+            }
+            for i in range(1, 6)
+        ]
+        sample_inserts = inserts_mod.resolve_inserts(
+            args.insert, post_count=len(sample_posts),
+            log=lambda msg: print(msg, file=sys.stderr),
+        )
         print(build_newsletter_html(
             sample_posts, args.template, extras_mod.SAMPLE_EXTRAS,
+            reader_intro=args.reader_intro, inserts=sample_inserts,
         ))
         return
 
@@ -353,8 +410,14 @@ def main() -> None:
 
         excerpt = post["excerpt"]
         if is_insider_post(post["title"]):
-            excerpt = excerpt + INSIDER_BLURB
-            print("  Insider post detected — appended upgrade blurb.", file=sys.stderr)
+            if args.no_insider_blurb:
+                print(
+                    "  Insider post detected; upgrade blurb suppressed "
+                    "(--no-insider-blurb).", file=sys.stderr,
+                )
+            else:
+                excerpt = excerpt + INSIDER_BLURB
+                print("  Insider post detected, appended upgrade blurb.", file=sys.stderr)
 
         posts_data.append({
             "post_id": post_id,
@@ -416,12 +479,30 @@ def main() -> None:
         post_urls=[p["url"] for p in posts_data],
         log=lambda msg: print(msg, file=sys.stderr),
     )
+    for e in extras:
+        for k in ("title_en", "source", "synopsis"):
+            if e.get(k):
+                e[k] = strip_banned_dashes(e[k])
+
+    # -----------------------------------------------------------------------
+    # Resolve Markdown inserts (--insert PATH:POS, repeatable)
+    # -----------------------------------------------------------------------
+    inserts_map: dict[int, str] = {}
+    if args.insert:
+        print("\nLoading Markdown inserts...", file=sys.stderr)
+        inserts_map = inserts_mod.resolve_inserts(
+            args.insert, post_count=len(posts_data),
+            log=lambda msg: print(msg, file=sys.stderr),
+        )
 
     # -----------------------------------------------------------------------
     # Build newsletter HTML
     # -----------------------------------------------------------------------
     print("\nBuilding newsletter HTML...", file=sys.stderr)
-    newsletter_html = build_newsletter_html(posts_data, args.template, extras)
+    newsletter_html = build_newsletter_html(
+        posts_data, args.template, extras, reader_intro=args.reader_intro,
+        inserts=inserts_map,
+    )
 
     # -----------------------------------------------------------------------
     # Create campaign
