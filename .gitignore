@@ -6,3 +6,10 @@ __pycache__/
 .claude/settings.local.json
 .claude/skills/send-free-newsletter/last-posts.json
 tmp/
+
+# Scratch / one-off analysis
+.tmp-*
+
+# Local data dumps — regenerated on demand, never committed
+# (inserts/ is intentionally tracked: reusable newsletter-insert assets)
+data/
