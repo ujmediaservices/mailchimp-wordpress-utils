@@ -1,0 +1,54 @@
+{# "What Japan's talking about this week" — viral JP tweets w/ translations.
+   Included from newsletter-free and newsletter-insider templates. Renders
+   nothing when jp_social is empty. #}
+{% if jp_social %}
+<tr>
+  <td style="padding: 0 24px;">
+    <hr style="border:0; border-top:2px solid #b3421d; margin:24px 0 0 0;" />
+  </td>
+</tr>
+
+<tr>
+  <td class="content" style="padding: 12px 24px;">
+    <a name="jp-social"></a>
+    <h2 style="margin: 0 0 8px 0;">What Japan's talking about this week</h2>
+    <p style="font-size: 16px; line-height: 1.5; color: #666666; margin: 0 0 20px 0;">
+      Viral discussions from the Japanese-language internet, translated.
+    </p>
+
+    {% for tweet in jp_social %}
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom: 24px;">
+      <tr>
+        <td align="center" style="padding-bottom: 12px;">
+          <a href="{{ tweet.url }}" target="_blank">
+            <img src="{{ tweet.image_url }}" alt="Tweet by {{ tweet.author }}"
+                 width="540"
+                 style="width:100%; max-width:540px; height:auto; border:1px solid #e0e0e0; border-radius:8px; display:block;" />
+          </a>
+        </td>
+      </tr>
+      <tr>
+        <td>
+          <p style="font-size: 14px; line-height: 1.5; color: #666666; margin: 0 0 6px 0; font-style: italic;">
+            <strong style="color: #222222;">JP:</strong> {{ tweet.jp }}
+          </p>
+          <p style="font-size: 16px; line-height: 1.5; color: #222222; margin: 0 0 10px 0;">
+            <strong>EN:</strong> {{ tweet.en }}
+          </p>
+          <p style="font-size: 15px; line-height: 1.5; color: #444444; margin: 0 0 8px 0;">
+            {{ tweet.context }}
+          </p>
+          <p style="font-size: 14px; margin: 0;">
+            <a href="{{ tweet.url }}" target="_blank" style="color: #b3421d;">{{ tweet.author }} on X &rarr;</a>
+          </p>
+        </td>
+      </tr>
+    </table>
+
+    {% if not loop.last %}
+    <hr style="border:0; border-top:1px solid #e0e0e0; margin: 0 0 16px 0;" />
+    {% endif %}
+    {% endfor %}
+  </td>
+</tr>
+{% endif %}

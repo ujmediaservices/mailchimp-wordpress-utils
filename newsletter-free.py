@@ -7,9 +7,12 @@ Usage:
 
 import argparse
 import base64
+import datetime as dt
 import html as html_mod
+import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -21,10 +24,18 @@ from jinja2 import Environment, FileSystemLoader
 
 import extras as extras_mod
 import inserts as inserts_mod
+import jp_social as jp_social_mod
 
 LIST_NAME = "Unseen Japan"
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 DEFAULT_TEMPLATE = "newsletter-free"
+
+# Editor's note defaults: required at the top of every send unless explicitly
+# disabled. Archive-after-success rule prevents accidental week-to-week reuse.
+PROJECT_ROOT = Path(__file__).parent
+DEFAULT_EDITORS_NOTE = PROJECT_ROOT / "inserts" / "editors-notes.md"
+EDITORS_NOTE_ARCHIVE_DIR = PROJECT_ROOT / "inserts" / "archive"
+STATE_FILE = PROJECT_ROOT / "data" / "last-free-newsletter.json"
 
 INSIDER_BLURB = (
     '<br /><br />'
@@ -258,6 +269,7 @@ class MailchimpAPI:
 def build_newsletter_html(
     posts: list[dict], template_name: str, extras: list[dict] | None = None,
     reader_intro: bool = False, inserts: dict[int, str] | None = None,
+    editors_note_html: str = "", jp_social: list[dict] | None = None,
 ) -> str:
     """Render the Jinja2 newsletter template with the given posts."""
     env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)))
@@ -265,7 +277,115 @@ def build_newsletter_html(
     return template.render(
         posts=posts, extras=extras or [], reader_intro=reader_intro,
         inserts=inserts or {},
+        editors_note_html=editors_note_html,
+        jp_social=jp_social or [],
     )
+
+
+# ---------------------------------------------------------------------------
+# Editor's note: required by default, archived after a successful send
+# ---------------------------------------------------------------------------
+
+def load_editors_note(
+    note_path: Path | None, *, no_editors_note: bool,
+    log,
+) -> str:
+    """Return rendered HTML for the editor's note, or ''.
+
+    Hard-errors when the canonical file is missing/empty unless
+    `--no-editors-note` was passed. Reuses inserts.render_markdown_insert so
+    the markdown vocabulary (image, ## heading, paragraphs, {{URL Button}})
+    matches the rest of the newsletter.
+    """
+    if no_editors_note:
+        log("  Editor's note: suppressed via --no-editors-note.")
+        return ""
+    path = note_path or DEFAULT_EDITORS_NOTE
+    if not path.exists():
+        print(
+            f"ERROR: editor's note required but {path} is missing. Either "
+            f"write this week's note (default path: {DEFAULT_EDITORS_NOTE}) "
+            "or pass --no-editors-note.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    raw = path.read_text(encoding="utf-8").strip()
+    if not raw:
+        print(
+            f"ERROR: editor's note at {path} is empty. Either write this "
+            "week's note or pass --no-editors-note.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    rendered = strip_banned_dashes(inserts_mod.render_markdown_insert(path))
+    log(f"  Editor's note: loaded {path.name}.")
+    return rendered
+
+
+def archive_editors_note(note_path: Path, log) -> None:
+    """Move the editor's note file to inserts/archive/ after a successful send.
+
+    Forces Jay to rewrite for next week (the absence of the canonical file is
+    the source of truth). Skipped silently if the path was an override
+    (--editors-note PATH pointing somewhere other than the default), since
+    overrides are usually intentional re-runs.
+    """
+    if note_path.resolve() != DEFAULT_EDITORS_NOTE.resolve():
+        log(
+            f"  Editor's note from {note_path} not archived "
+            "(non-default path)."
+        )
+        return
+    if not note_path.exists():
+        return
+    EDITORS_NOTE_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now().strftime("%Y-%m-%d-%H%M")
+    target = EDITORS_NOTE_ARCHIVE_DIR / f"editors-notes-{stamp}.md"
+    shutil.move(str(note_path), str(target))
+    log(f"  Editor's note archived: {target.name} (next week, write a new one).")
+
+
+# ---------------------------------------------------------------------------
+# State file: passes content from this run to newsletter-insider.py
+# ---------------------------------------------------------------------------
+
+def write_state_file(
+    *, campaign_id: str, web_id: str, subject: str, preview: str,
+    posts: list[dict], extras: list[dict], jp_social: list[dict],
+    editors_note_html: str, log,
+) -> None:
+    """Persist what this free run produced so newsletter-insider.py can wrap it.
+
+    The Insider script reuses extras + jp_social + editors_note_html verbatim,
+    layers the full Insider article on top, and skips ad-style inserts. Only
+    the most-recent free run is preserved (file is overwritten each time).
+    """
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "campaign_id": campaign_id,
+        "web_id": web_id,
+        "subject": subject,
+        "preview": preview,
+        "post_ids": [p["post_id"] for p in posts],
+        "posts": [
+            {
+                "post_id": p["post_id"],
+                "title": p["title"],
+                "url": p["url"],
+                "excerpt": p["excerpt"],
+                "image_url": p.get("image_url") or "",
+            }
+            for p in posts
+        ],
+        "extras": extras,
+        "jp_social": jp_social,
+        "editors_note_html": editors_note_html,
+    }
+    STATE_FILE.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8",
+    )
+    log(f"  State file written: {STATE_FILE.relative_to(PROJECT_ROOT)}")
 
 
 # ---------------------------------------------------------------------------
@@ -330,6 +450,39 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--editors-note", type=Path, default=None,
+        help=(
+            f"Path to a markdown editor's note. Default: "
+            f"{DEFAULT_EDITORS_NOTE.relative_to(PROJECT_ROOT)}. Hard-errors "
+            "if missing/empty (use --no-editors-note to suppress). After a "
+            "successful send the default-path file is moved to "
+            "inserts/archive/ to force a fresh note next week."
+        ),
+    )
+    parser.add_argument(
+        "--no-editors-note", action="store_true",
+        help=(
+            "Skip the editor's note. Use only for autonomous test runs; "
+            "real sends should always carry a fresh note."
+        ),
+    )
+    parser.add_argument(
+        "--jp-social", type=Path, default=None,
+        help=(
+            "Path to a staged JP-social markdown file (from "
+            "`python jp_social.py stage`). Renders the 'What Japan's talking "
+            "about this week' section between posts and 'Also from Japan'."
+        ),
+    )
+    parser.add_argument(
+        "--jp-social-auto", action="store_true",
+        help=(
+            f"Look for today's JP-social file at "
+            f"inserts/jp-social-YYYY-MM-DD.md and use it. Hard-errors if "
+            "missing — run `python jp_social.py stage` first."
+        ),
+    )
+    parser.add_argument(
         "--dump-html", action="store_true",
         help="Render the template with sample data and print it.",
     )
@@ -359,9 +512,26 @@ def main() -> None:
             args.insert, post_count=len(sample_posts),
             log=lambda msg: print(msg, file=sys.stderr),
         )
+        editors_note_html = load_editors_note(
+            args.editors_note,
+            no_editors_note=args.no_editors_note,
+            log=lambda msg: print(msg, file=sys.stderr),
+        )
+        jp_social_md = jp_social_mod.resolve_md_path(
+            jp_social=str(args.jp_social) if args.jp_social else None,
+            jp_social_auto=args.jp_social_auto,
+        )
+        jp_social_items: list[dict] = []
+        if jp_social_md:
+            jp_social_items = jp_social_mod.load_section(
+                jp_social_md, mc=None,
+                log=lambda msg: print(msg, file=sys.stderr),
+            )
         print(build_newsletter_html(
             sample_posts, args.template, extras_mod.SAMPLE_EXTRAS,
             reader_intro=args.reader_intro, inserts=sample_inserts,
+            editors_note_html=editors_note_html,
+            jp_social=jp_social_items,
         ))
         return
 
@@ -496,12 +666,41 @@ def main() -> None:
         )
 
     # -----------------------------------------------------------------------
+    # Load editor's note (required by default; archived after success)
+    # -----------------------------------------------------------------------
+    print("\nLoading editor's note...", file=sys.stderr)
+    editors_note_path = args.editors_note or DEFAULT_EDITORS_NOTE
+    editors_note_html = load_editors_note(
+        args.editors_note,
+        no_editors_note=args.no_editors_note,
+        log=lambda msg: print(msg, file=sys.stderr),
+    )
+
+    # -----------------------------------------------------------------------
+    # Load JP tweets section (optional; uploads screenshots to Mailchimp)
+    # -----------------------------------------------------------------------
+    jp_social_md = jp_social_mod.resolve_md_path(
+        jp_social=str(args.jp_social) if args.jp_social else None,
+        jp_social_auto=args.jp_social_auto,
+    )
+    jp_social_items: list[dict] = []
+    if jp_social_md:
+        print(f"\nLoading JP-social section from {jp_social_md}...",
+              file=sys.stderr)
+        jp_social_items = jp_social_mod.load_section(
+            jp_social_md, mc=mc,
+            log=lambda msg: print(msg, file=sys.stderr),
+        )
+
+    # -----------------------------------------------------------------------
     # Build newsletter HTML
     # -----------------------------------------------------------------------
     print("\nBuilding newsletter HTML...", file=sys.stderr)
     newsletter_html = build_newsletter_html(
         posts_data, args.template, extras, reader_intro=args.reader_intro,
         inserts=inserts_map,
+        editors_note_html=editors_note_html,
+        jp_social=jp_social_items,
     )
 
     # -----------------------------------------------------------------------
@@ -522,6 +721,31 @@ def main() -> None:
     # Set content
     mc.set_campaign_content(campaign_id, newsletter_html)
     print("  Content set.", file=sys.stderr)
+
+    # -----------------------------------------------------------------------
+    # Persist state for the Insider wrapper + record JP-social picks +
+    # archive the editor's note so next week starts fresh
+    # -----------------------------------------------------------------------
+    print("\nPost-send bookkeeping...", file=sys.stderr)
+    write_state_file(
+        campaign_id=campaign_id,
+        web_id=str(web_id),
+        subject=args.title,
+        preview=args.preview,
+        posts=posts_data,
+        extras=extras,
+        jp_social=jp_social_items,
+        editors_note_html=editors_note_html,
+        log=lambda msg: print(msg, file=sys.stderr),
+    )
+    if jp_social_md:
+        jp_social_mod.record_used(jp_social_md)
+        print(
+            f"  JP-social ledger updated: data/jp-social-used.json",
+            file=sys.stderr,
+        )
+    if not args.no_editors_note:
+        archive_editors_note(editors_note_path, log=lambda msg: print(msg, file=sys.stderr))
 
     segment_note = ""
     if not args.segment_id:

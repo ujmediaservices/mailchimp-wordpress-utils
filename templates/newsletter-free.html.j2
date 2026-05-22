@@ -103,6 +103,22 @@
             </td>
           </tr>
 
+          {% if editors_note_html %}
+          <!-- ════════════════════════════════════════════════
+               EDITOR'S NOTE (weekly publisher intro)
+               ════════════════════════════════════════════════ -->
+          <tr>
+            <td class="content" style="padding: 16px 24px;">
+              {{ editors_note_html | safe }}
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 0 24px;">
+              <hr style="border:0; border-top:1px solid #e0e0e0; margin: 0;" />
+            </td>
+          </tr>
+          {% endif %}
+
           {% if reader_intro %}
           <!-- ════════════════════════════════════════════════
                READER INTRO (placeholder; edit in Mailchimp)
@@ -225,6 +241,9 @@
           {% endif %}
           {% endfor %}
 
+
+          {# "What Japan's talking about this week" — viral JP tweets #}
+          {% include '_jp_social_section.html.j2' %}
 
           {# "Also from Japan this week" section #}
           {% include '_extras_section.html.j2' %}

@@ -1,6 +1,6 @@
 ---
 name: send-free-newsletter
-description: Draft and send the Unseen Japan free newsletter. Accepts a list of WordPress post IDs, or fetches recent posts from the last 8 days (excluding any from the previous newsletter) for selection if none are provided. Scores each candidate's lead potential against historical click-rate patterns and recommends a lead. Suggests a subject line and preview text, confirms with the user, then builds an "Also from Japan this week" section with 2-3 sentence English synopses sourced from the find-content trend log. Optionally inserts a "Hello Loyal UJ Reader," intro placeholder block for a hand-written personal note, and supports embedding Markdown inserts (image + heading + paragraphs + CTA button) at a chosen post position via --insert PATH:POS. Runs newsletter-free.py to create the Mailchimp draft. Remembers the IDs used in the last newsletter so they can be filtered out next time. Use when the user asks to send/draft/build the free newsletter.
+description: Draft and send the Unseen Japan free newsletter. Accepts a list of WordPress post IDs, or fetches recent posts from the last 8 days (excluding any from the previous newsletter) for selection if none are provided. Scores each candidate's lead potential against historical click-rate patterns and recommends a lead. Suggests a subject line and preview text, confirms with the user, then builds an "Also from Japan this week" section with 2-3 sentence English synopses sourced from the find-content trend log. Loads a required weekly editor's note from `inserts/editors-notes.md` (top of the newsletter; archive-after-success forces a fresh note each week) and optionally a "What Japan's talking about this week" section of 2-3 viral JP tweets with screenshots + translations (staged via `python jp_social.py stage` before this skill runs). Optionally inserts a "Hello Loyal UJ Reader," intro placeholder block for a hand-written personal note, and supports embedding Markdown inserts (image + heading + paragraphs + CTA button) at a chosen post position via --insert PATH:POS. Runs newsletter-free.py to create the Mailchimp draft and writes `data/last-free-newsletter.json` so `/send-insider-newsletter` can wrap it later in the week. Remembers the IDs used in the last newsletter so they can be filtered out next time. Use when the user asks to send/draft/build the free newsletter.
 ---
 
 # Send free newsletter
@@ -9,10 +9,10 @@ You are drafting the weekly free newsletter for Unseen Japan. The user will give
 
 ## Working directory
 
-This skill assumes the working directory is `G:\My Drive\Unseen Japan\Code\mailchimp-wordpress-utils`. If invoked from elsewhere, run first:
+This skill assumes the working directory is `D:\uj\mailchimp-wordpress-utils`. If invoked from elsewhere, run first:
 
 ```bash
-cd "G:\My Drive\Unseen Japan\Code\mailchimp-wordpress-utils"
+cd "D:\uj\mailchimp-wordpress-utils"
 ```
 
 All relative paths and scripts referenced below resolve from that directory.
@@ -118,6 +118,60 @@ Add a 4–8 word reason after the label, e.g. `strong (foreigner-friction, named
 - If multiple posts tie at `strong`, recommend the one whose hook is most concrete (named entity beats abstract; specific number beats general claim) and ask the user to confirm.
 
 The recommendation only affects which post the *subject line and preview text* lead on. It never reorders the `--posts` argument — that always follows the user's input order.
+
+## Pre-flight: editor's note + JP tweets
+
+Before doing anything else in the run, check these two new (since 2026-05-21)
+inputs. They're cheap to look at and prevent late surprises.
+
+### 1. Editor's note (required, hard-error if missing)
+
+`inserts/editors-notes.md` must exist and be non-empty. The script refuses to
+render without it (override: `--no-editors-note`, only for autonomous test
+runs). After every successful send the file is moved to
+`inserts/archive/editors-notes-{YYYY-MM-DD-HHMM}.md` — that forces a fresh
+note next week and prevents accidental reuse.
+
+If `inserts/editors-notes.md` is missing or empty when this skill is invoked:
+ask the user "What should this week's editor's note say? A 2-4 sentence
+opener works (one item to flag, one recommendation, or a personal aside)."
+Then write the file together. Markdown vocabulary is the same as for any
+insert: `## Heading`, paragraphs with `[text](url)` links, `{{URL Button
+Text}}` for a brand-color CTA, `![alt](url)` for a full-width image.
+
+### 2. JP tweets section (optional, but most weeks)
+
+The free newsletter now supports a "What Japan's talking about this week"
+section sourced from `/find-social` shortlists. Workflow:
+
+1. Ask the user: "Want JP tweets in this newsletter? (default yes)" If they
+   say no, skip to "Inputs" below and run without `--jp-social-auto`.
+2. If yes, look for a staged markdown file at
+   `inserts/jp-social-{today}.md`. If absent, stage it now:
+
+   ```bash
+   python jp_social.py stage   # default: 3 tweets from latest /find-social shortlist
+   ```
+
+   The script filters out news-outlet handles (denylist:
+   `jp_social_news_handles.txt`), tweets that became UJ stories
+   (`data/jp-social-excludes.txt`), tweets already linked from recent UJ
+   posts, and tweets used in the last 4 weeks of this section. It writes a
+   draft md file at `inserts/jp-social-{today}.md` and screenshots at
+   `inserts/jp-social-{today}/tweet-N.png`.
+3. Open the staged md and ask the user to review: edit translations + the
+   `context:` blurbs, swap a pick if needed, delete a block to drop a tweet.
+   Validate after edits:
+
+   ```bash
+   python jp_social.py validate inserts/jp-social-{today}.md
+   ```
+
+4. Later, pass `--jp-social-auto` to `newsletter-free.py` so it loads the
+   staged file. Screenshots get uploaded to Mailchimp's CDN automatically.
+
+If a tweet seeded a UJ story later, append its URL to
+`data/jp-social-excludes.txt` so it never resurfaces in this section.
 
 ## Steps
 
@@ -277,6 +331,10 @@ The recommendation only affects which post the *subject line and preview text* l
 
    Add `--reader-intro` to the command if the user said yes in step 3. The script then inserts a "Hello Loyal UJ Reader," placeholder block at the top of the email body; the user replaces the placeholder paragraph in Mailchimp before sending (or deletes the whole block if they change their mind).
 
+   Add `--jp-social-auto` (or `--jp-social inserts/jp-social-YYYY-MM-DD.md` to an explicit path) if the user opted in to JP tweets per pre-flight step 2 above. Omit both flags to skip the section.
+
+   The editor's note is loaded automatically from `inserts/editors-notes.md` — no flag needed. The script hard-errors if that file is missing/empty (pre-flight step 1 should have caught this; if you hit it here, go back and write the note). After a successful send the file is auto-archived to `inserts/archive/`, so the next weekly run will start clean.
+
    Add `--insert PATH:POS` (repeatable) to embed a Markdown insert AFTER post `POS` (1-indexed). See "Markdown inserts" below for the file format. Example: `--insert inserts/tours-unique.md:3` places the tours promo between posts 3 and 4. Only use when the user asks for it.
 
    Pass the post IDs in the **exact order** the user gave them. Do not reorder based on the lead.
@@ -305,6 +363,8 @@ The recommendation only affects which post the *subject line and preview text* l
 7. **Flag the segment reminder.** The script targets the full "Unseen Japan" list by default. If the script's output includes the "NOTE: No segment specified" line, pass it along — the user needs to set the audience segment in Mailchimp before sending.
 
 8. **Remind about the reader-intro placeholder.** If `--reader-intro` was passed, tell the user to replace the highlighted "[PERSONAL NOTE: ...]" paragraph in Mailchimp before sending (or delete the whole block if they decide against a note).
+
+9. **Cue the Insider follow-up (if applicable).** The script writes `data/last-free-newsletter.json` automatically — `/send-insider-newsletter` reads it later this week to wrap the free draft with the Insider article. If the user mentioned they'll send an Insider this week, remind them: "Next, run `/send-insider-newsletter` with this week's Insider post ID. It'll layer the full article on top of everything you just shipped, minus the ad slots." State file expires 3 days after this run, so the Insider send must happen within that window.
 
 ## Markdown inserts
 

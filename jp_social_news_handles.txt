@@ -1,0 +1,41 @@
+# X handles to exclude from the JP-social newsletter section.
+# Purpose: keep this section to user/civilian discussions. Newsroom feeds
+# belong in the "Also from Japan this week" extras section; including them
+# both would overlap. Match is case-insensitive; one handle per line; lines
+# starting with # are comments.
+#
+# Jay: edit to extend. After changes, jp_social.py reloads on next run.
+
+livedoornews
+oricon
+YahooNewsTopics
+nhk_news
+nhk_kabun
+asahi
+asahi_shakai
+mainichi_news
+mainichi
+nikkei
+jijicom
+kyodo_official
+ANNnewsCH
+sankei_news
+47news
+news24ntv
+tbs_news_dig
+tbs_newsi
+reuterjapan
+CNN_Co_Jp
+WSJJapan
+bbcnewsjapan
+bloombergjp
+HuffPostJapan
+BuzzFeedJapan
+nippon_com
+Newsweek_JAPAN
+tokyoshimbun
+fnn_news
+NHKyokohama
+NHKchiba
+NHKsaitama
+NHKtokyo_lnews

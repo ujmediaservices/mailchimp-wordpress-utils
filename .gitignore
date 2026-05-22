@@ -5,6 +5,7 @@ __pycache__/
 .env
 .claude/settings.local.json
 .claude/skills/send-free-newsletter/last-posts.json
+.claude/skills/send-insider-newsletter/insider-segment.json
 tmp/
 
 # Scratch / one-off analysis
@@ -13,3 +14,12 @@ tmp/
 # Local data dumps — regenerated on demand, never committed
 # (inserts/ is intentionally tracked: reusable newsletter-insert assets)
 data/
+
+# Per-week JP-social screenshots + the canonical editor's-note file
+# (archived copies under inserts/archive/ also never committed).
+# The denylist file jp_social_news_handles.txt IS tracked.
+inserts/jp-social-*/
+inserts/jp-social-*.md
+inserts/editors-notes.md
+inserts/archive/
+
