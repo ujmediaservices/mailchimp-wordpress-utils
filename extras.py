@@ -31,7 +31,7 @@ from bs4 import BeautifulSoup
 DEFAULT_TREND_LOG = Path(
     os.environ.get(
         "FIND_CONTENT_TREND_LOG",
-        r"G:/My Drive/Unseen Japan/Code/find-content/trends/observations.ndjson",
+        r"D:/uj/find-content/trends/observations.ndjson",
     )
 )
 RELEVANCE_FLOOR = {"HIGH", "VERY HIGH"}

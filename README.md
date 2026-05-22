@@ -45,7 +45,7 @@ python newsletter-free.py \
 
 Filters: only HIGH and VERY HIGH observations within the lookback window; URLs already cited in any covered post's body are dropped automatically; pass `--extras-exclude URL` (repeatable) to drop stories already shared on social. Use `--extras-json path.json` to bypass the trend log and supply hand-curated entries (a list of objects with `url`, `title_en`, `source`, `synopsis`, `topics`).
 
-The trend log path defaults to `G:/My Drive/Unseen Japan/Code/find-content/trends/observations.ndjson` (override with `--extras-log-path` or the `FIND_CONTENT_TREND_LOG` env var). When extras are enabled but nothing matches the filter, the section is silently omitted.
+The trend log path defaults to `D:/uj/find-content/trends/observations.ndjson` (override with `--extras-log-path` or the `FIND_CONTENT_TREND_LOG` env var). When extras are enabled but nothing matches the filter, the section is silently omitted.
 
 ## newsletter-oneoff.py
 
