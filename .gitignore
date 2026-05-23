@@ -20,6 +20,7 @@ data/
 # The denylist file jp_social_news_handles.txt IS tracked.
 inserts/jp-social-*/
 inserts/jp-social-*.md
+inserts/extras-*.md
 inserts/editors-notes.md
 inserts/archive/
 

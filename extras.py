@@ -21,7 +21,8 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timedelta, timezone
+import re
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
@@ -102,14 +103,125 @@ def load_extras_from_trend_log(
 
 
 def render_extras_for_template(records: list[dict]) -> list[dict]:
+    import inserts as inserts_mod
     out: list[dict] = []
     for e in records:
+        # synopsis renders as raw HTML (template autoescape is off), so linkify
+        # any [text](url) the user added and HTML-escape the rest. title_en is
+        # already wrapped in an <a> by the template, so leave it raw (no nesting).
         out.append({
             "title_en": e.get("title_en") or e.get("title_jp") or "(untitled)",
             "source": (e.get("source") or "").strip(),
             "url": (e.get("url") or "").strip(),
-            "synopsis": (e.get("synopsis") or "").strip(),
+            "synopsis": inserts_mod.render_inline((e.get("synopsis") or "").strip()),
             "topics": e.get("topics") or [],
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Editable-markdown staging (the user reviews/edits before the newsletter build)
+# ---------------------------------------------------------------------------
+
+_EM_DASH = chr(0x2014)
+_EN_DASH = chr(0x2013)
+_EXTRAS_REQUIRED = ("url", "source", "title_en", "synopsis")
+
+
+def _clean_dashes(text: str) -> str:
+    """Replace em/en dashes (banned in UJ copy) with commas. Leaves U+30FC alone."""
+    if not text:
+        return text
+    for d in (_EM_DASH, _EN_DASH):
+        text = text.replace(" " + d + " ", ", ").replace(d, ", ")
+    return text
+
+
+def stage_extras_markdown(
+    records: list[dict], md_path: Path, *, generated_at: str | None = None,
+) -> Path:
+    """Write the 'Also from Japan this week' extras to an editable markdown.
+
+    Mirrors jp_social's staging: one ``### Story N`` block per extra with
+    single-line ``key: value`` fields. The user edits synopses/titles, deletes
+    a block to drop a story, then ``parse_extras_markdown`` reads it back into
+    the dicts that ``render_extras_for_template`` expects.
+    """
+    gen = generated_at or date.today().isoformat()
+    blocks: list[str] = []
+    for i, e in enumerate(records, start=1):
+        topics = e.get("topics") or []
+        topics_str = ", ".join(topics) if isinstance(topics, list) else str(topics)
+        blocks.append(
+            f"### Story {i}\n"
+            f"url: {(e.get('url') or '').strip()}\n"
+            f"source: {(e.get('source') or '').strip()}\n"
+            f"title_en: {_clean_dashes((e.get('title_en') or '').strip())}\n"
+            f"topics: {topics_str}\n"
+            f"synopsis: {_clean_dashes((e.get('synopsis') or '').strip())}\n"
+        )
+    body = (
+        f"---\n"
+        f"generated_at: {gen}\n"
+        f"section: Also from Japan this week\n"
+        f"---\n\n"
+        f"## Also from Japan this week\n\n"
+        + "\n".join(blocks)
+    )
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    md_path.write_text(body, encoding="utf-8")
+    return md_path
+
+
+def parse_extras_markdown(md_path: Path) -> list[dict]:
+    """Read an edited extras markdown back into render-ready dicts.
+
+    Each ``### Story`` block must keep url/source/title_en/synopsis; topics is
+    optional (comma-separated). Raises ValueError if a kept block is missing a
+    required field, so a half-edited file fails loudly rather than shipping a
+    blank story.
+    """
+    text = md_path.read_text(encoding="utf-8")
+    body = re.sub(r"^---\n.*?\n---\n", "", text, count=1, flags=re.DOTALL)
+    parts = re.split(r"\n(?=### )", body)
+    out: list[dict] = []
+    for part in parts:
+        part = part.strip()
+        if not part.startswith("###"):
+            continue
+        header, _, rest = part.partition("\n")
+        label = header.lstrip("# ").strip() or "(unlabeled)"
+        fields: dict[str, str] = {}
+        for line in rest.splitlines():
+            line = line.rstrip()
+            # Tolerate Markdown blockquote markers if the user reformats blocks.
+            while line.startswith(">"):
+                line = line[1:].lstrip()
+            if not line or line.startswith("#"):
+                continue
+            m = re.match(r"^([a-z_]+):\s*(.*)$", line)
+            if not m:
+                continue
+            key, value = m.group(1), m.group(2).strip()
+            if key == "url":
+                # Unwrap a bare Markdown link [url](href) back to the href.
+                lm = re.match(r"^\[.*?\]\(([^)]+)\)\s*$", value)
+                if lm:
+                    value = lm.group(1).strip()
+            fields[key] = value
+        missing = [f for f in _EXTRAS_REQUIRED if not fields.get(f)]
+        if missing:
+            raise ValueError(
+                f"Extras block '{label}' is missing required fields: "
+                f"{', '.join(missing)}. Fill them or delete the block."
+            )
+        topics = [t.strip() for t in fields.get("topics", "").split(",") if t.strip()]
+        out.append({
+            "url": fields["url"],
+            "source": fields["source"],
+            "title_en": fields["title_en"],
+            "synopsis": fields["synopsis"],
+            "topics": topics,
         })
     return out
 
