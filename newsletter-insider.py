@@ -126,23 +126,39 @@ class MailchimpAPI:
         })
         return data["full_size_url"]
 
+    def find_folder(self, name):
+        """Return the campaign-folder id whose name matches (case-insensitive)."""
+        data = self._get("/campaign-folders", {"count": 100})
+        target = name.strip().lower()
+        for folder in data.get("folders", []):
+            if folder.get("name", "").strip().lower() == target:
+                return folder["id"]
+        return None
+
     def create_campaign(self, list_id, title, subject, preview_text,
-                        segment_id):
+                        segment_id, folder_id=None):
+        settings = {
+            "subject_line": subject,
+            "preview_text": preview_text,
+            "title": title,
+            "from_name": "Jay at Unseen Japan",
+            "reply_to": "jay@unseenjapan.com",
+        }
+        if folder_id:
+            settings["folder_id"] = folder_id
         return self._post("/campaigns", {
             "type": "regular",
             "recipients": {
                 "list_id": list_id,
+                # For a SAVED segment, Mailchimp wants saved_segment_id alone.
+                # Adding match/conditions makes it an ad-hoc segment (with no
+                # conditions => the whole list), which is why targeting "hasn't
+                # worked" before.
                 "segment_opts": {
-                    "saved_segment_id": segment_id, "match": "all",
+                    "saved_segment_id": segment_id,
                 },
             },
-            "settings": {
-                "subject_line": subject,
-                "preview_text": preview_text,
-                "title": title,
-                "from_name": "Jay at Unseen Japan",
-                "reply_to": "jay@unseenjapan.com",
-            },
+            "settings": settings,
         })
 
     def set_campaign_content(self, campaign_id, html):
@@ -156,26 +172,32 @@ class MailchimpAPI:
 INSIDER_TAG_RE = re.compile(r"\[insider\]\s*", re.IGNORECASE)
 
 
-def insider_intro_html(post_title: str, post_url: str) -> str:
-    """The lead paragraph that identifies the Insider article + login CTA.
+INSIDER_BACK_ISSUES_URL = "https://unseen-japan.com/category/insider"
 
-    Sits directly above the full article body. Keeps the brand-color
-    framing consistent with the rest of the template.
+
+def insider_intro_html(post_url: str) -> str:
+    """The traditional Insider greeting box that sits above the full article.
+
+    Keeps the brand-color callout framing; the copy is UJ's standard
+    thank-you-for-supporting message with a *|FNAME|* merge tag and links to
+    this week's article and the Insider back-issue archive.
     """
-    clean_title = strip_banned_dashes(INSIDER_TAG_RE.sub("", post_title).strip())
-    safe_title = html_mod.escape(clean_title)
     safe_url = html_mod.escape(post_url, quote=True)
     return (
-        '<p style="font-size:18px;line-height:1.5;color:#222222;'
-        'padding:14px 16px;background-color:#faf3ee;'
+        '<div style="padding:14px 16px;background-color:#faf3ee;'
         'border-left:4px solid #b3421d;margin:0 0 20px 0;">'
-        "This week's Insider exclusive: "
-        f'<strong>{safe_title}</strong>. '
-        "You're reading the full piece below. To read it on "
-        f'<a href="{safe_url}" target="_blank" '
-        'style="color:#b3421d;">unseen-japan.com</a>, just log in to your '
-        "Insider account."
+        '<p style="font-size:18px;line-height:1.5;color:#222222;margin:0 0 12px 0;">'
+        "Hi there *|FNAME|*,"
         "</p>"
+        '<p style="font-size:18px;line-height:1.5;color:#222222;margin:0;">'
+        "Here's your Unseen Japan Insider piece for the week, our way of saying "
+        '"thanks" for being a financial supporter of the site. You can find '
+        f'<a href="{safe_url}" target="_blank" style="color:#b3421d;">this article</a>'
+        " and all of our Insider back issues on "
+        f'<a href="{INSIDER_BACK_ISSUES_URL}" target="_blank" '
+        'style="color:#b3421d;">our website</a>.'
+        "</p>"
+        "</div>"
     )
 
 
@@ -195,9 +217,7 @@ def render_html(
     env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)))
     template = env.get_template(TEMPLATE_NAME)
     return template.render(
-        insider_intro_html=insider_intro_html(
-            insider_post["title"], insider_post["url"],
-        ),
+        insider_intro_html=insider_intro_html(insider_post["url"]),
         insider_title=strip_banned_dashes(
             INSIDER_TAG_RE.sub("", insider_post["title"]).strip()
         ),
@@ -239,6 +259,14 @@ def main() -> None:
     )
     parser.add_argument("--subject", default=None)
     parser.add_argument("--preview", default=None)
+    parser.add_argument(
+        "--folder", default="UJ Insider",
+        help=(
+            "Mailchimp campaign-folder name to file the draft under "
+            "(matched case-insensitively). Default: %(default)s. Pass an empty "
+            "string to leave the campaign unfiled."
+        ),
+    )
     parser.add_argument(
         "--state", type=Path, default=STATE_FILE,
         help=f"Path to the free-run state file (default {STATE_FILE}).",
@@ -322,6 +350,49 @@ def main() -> None:
     subject = args.subject or sug_subject
     preview = args.preview or sug_preview
 
+    # ----------- live setup (before render, so a WebP featured image can be
+    #             converted, hosted on Mailchimp, and used in the HTML) -------
+    mc = None
+    audience = None
+    if not args.dump_html:
+        if args.insider_segment_id is None:
+            print(
+                "ERROR: --insider-segment-id is required for live sends "
+                "(otherwise the campaign would target the full list).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        mc_api_key = os.environ.get("MAILCHIMP_API_KEY")
+        if not mc_api_key:
+            print("ERROR: MAILCHIMP_API_KEY not set.", file=sys.stderr)
+            sys.exit(1)
+        mc = MailchimpAPI(mc_api_key)
+        audience = mc.find_list(LIST_NAME)
+        if not audience:
+            print(f"ERROR: list '{LIST_NAME}' not found.", file=sys.stderr)
+            sys.exit(1)
+
+        # Mailchimp rejects WebP. If the featured image is WebP, convert it to
+        # JPEG and host it on Mailchimp; otherwise keep the WordPress URL.
+        if insider_image_url:
+            try:
+                ir = requests.get(insider_image_url, auth=wp_auth, timeout=60)
+                ir.raise_for_status()
+                if wp_post.is_webp_bytes(ir.content):
+                    jpeg, fname, _ = wp_post.ensure_mailchimp_safe_image(
+                        ir.content, f"insider-{args.insider_post_id}.jpg",
+                    )
+                    insider_image_url = mc.upload_image(fname, jpeg)
+                    print(
+                        "  Converted WebP featured image to JPEG and uploaded "
+                        "to Mailchimp.", file=sys.stderr,
+                    )
+            except requests.RequestException as exc:
+                print(
+                    f"  WARNING: featured-image WebP check failed: {exc}; "
+                    "using the WordPress URL.", file=sys.stderr,
+                )
+
     # ----------- render HTML -----------
     print("\nBuilding Insider newsletter HTML...", file=sys.stderr)
     html = render_html(
@@ -336,33 +407,23 @@ def main() -> None:
         print(html)
         return
 
-    # ----------- live send: require segment -----------
-    if args.insider_segment_id is None:
-        print(
-            "ERROR: --insider-segment-id is required for live sends "
-            "(otherwise the campaign would target the full list).",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    mc_api_key = os.environ.get("MAILCHIMP_API_KEY")
-    if not mc_api_key:
-        print("ERROR: MAILCHIMP_API_KEY not set.", file=sys.stderr)
-        sys.exit(1)
-    mc = MailchimpAPI(mc_api_key)
-
-    audience = mc.find_list(LIST_NAME)
-    if not audience:
-        print(f"ERROR: list '{LIST_NAME}' not found.", file=sys.stderr)
-        sys.exit(1)
-
     print("\nCreating Mailchimp campaign...", file=sys.stderr)
+    folder_id = None
+    if args.folder.strip():
+        folder_id = mc.find_folder(args.folder)
+        if folder_id:
+            print(f"  Filing under folder: {args.folder} ({folder_id})",
+                  file=sys.stderr)
+        else:
+            print(f"  WARNING: no campaign folder named {args.folder!r}; "
+                  "leaving the draft unfiled.", file=sys.stderr)
     campaign = mc.create_campaign(
         list_id=audience["id"],
         title=subject,
         subject=subject,
         preview_text=preview,
         segment_id=args.insider_segment_id,
+        folder_id=folder_id,
     )
     campaign_id = campaign["id"]
     web_id = campaign.get("web_id", "")

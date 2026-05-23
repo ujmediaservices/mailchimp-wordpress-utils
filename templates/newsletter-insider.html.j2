@@ -109,9 +109,6 @@
           </tr>
           {% endif %}
 
-          {# "What Japan's talking about this week" partial #}
-          {% include '_jp_social_section.html.j2' %}
-
           {% if carried_posts %}
           <tr>
             <td style="padding: 0 24px;">
@@ -168,6 +165,9 @@
           {% endif %}
           {% endfor %}
           {% endif %}
+
+          {# "What Japan's talking about this week" partial #}
+          {% include '_jp_social_section.html.j2' %}
 
           {# "Also from Japan this week" — same data as the free run #}
           {% include '_extras_section.html.j2' %}
