@@ -25,6 +25,7 @@ from jinja2 import Environment, FileSystemLoader
 import extras as extras_mod
 import inserts as inserts_mod
 import jp_social as jp_social_mod
+import wp_post
 
 LIST_NAME = "Unseen Japan"
 TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -232,6 +233,15 @@ class MailchimpAPI:
         })
         return data["full_size_url"]
 
+    def find_folder(self, name: str) -> str | None:
+        """Return the campaign-folder id whose name matches (case-insensitive)."""
+        data = self._get("/campaign-folders", {"count": 100})
+        target = name.strip().lower()
+        for folder in data.get("folders", []):
+            if folder.get("name", "").strip().lower() == target:
+                return folder["id"]
+        return None
+
     def create_campaign(
         self,
         list_id: str,
@@ -239,23 +249,29 @@ class MailchimpAPI:
         subject: str,
         preview_text: str,
         segment_id: int | None = None,
+        folder_id: str | None = None,
     ) -> dict:
         recipients: dict = {"list_id": list_id}
         if segment_id is not None:
+            # Saved segment: saved_segment_id alone. Adding match/conditions
+            # makes Mailchimp treat it as an ad-hoc segment with no conditions
+            # (= the whole list), which silently breaks targeting.
             recipients["segment_opts"] = {
                 "saved_segment_id": segment_id,
-                "match": "all",
             }
+        settings: dict = {
+            "subject_line": subject,
+            "preview_text": preview_text,
+            "title": title,
+            "from_name": "Jay at Unseen Japan",
+            "reply_to": "jay@unseenjapan.com",
+        }
+        if folder_id:
+            settings["folder_id"] = folder_id
         return self._post("/campaigns", {
             "type": "regular",
             "recipients": recipients,
-            "settings": {
-                "subject_line": subject,
-                "preview_text": preview_text,
-                "title": title,
-                "from_name": "Jay at Unseen Japan",
-                "reply_to": "jay@unseenjapan.com",
-            },
+            "settings": settings,
         })
 
     def set_campaign_content(self, campaign_id: str, html: str) -> dict:
@@ -405,6 +421,14 @@ def main() -> None:
     parser.add_argument(
         "--segment-id", type=int, default=None,
         help="Mailchimp saved segment ID to target (optional).",
+    )
+    parser.add_argument(
+        "--folder", default="Unseen Japan Newsletter",
+        help=(
+            "Mailchimp campaign-folder name to file the draft under "
+            "(matched case-insensitively). Default: %(default)s. Pass an empty "
+            "string to leave the campaign unfiled."
+        ),
     )
     parser.add_argument(
         "--template", default=DEFAULT_TEMPLATE,
@@ -612,6 +636,15 @@ def main() -> None:
             filename = (
                 f"newsletter-{post['post_id']}-{post['image_path'].name}"
             )
+            # Mailchimp rejects WebP; convert to JPEG first if needed.
+            image_bytes, filename, converted = wp_post.ensure_mailchimp_safe_image(
+                image_bytes, filename,
+            )
+            if converted:
+                print(
+                    f"  Converted WebP featured image to JPEG for post "
+                    f"{post['post_id']}.", file=sys.stderr,
+                )
             try:
                 mc_url = mc.upload_image(filename, image_bytes)
                 post["image_url"] = mc_url
@@ -707,12 +740,22 @@ def main() -> None:
     # Create campaign
     # -----------------------------------------------------------------------
     print("\nCreating Mailchimp campaign...", file=sys.stderr)
+    folder_id = None
+    if args.folder.strip():
+        folder_id = mc.find_folder(args.folder)
+        if folder_id:
+            print(f"  Filing under folder: {args.folder} ({folder_id})",
+                  file=sys.stderr)
+        else:
+            print(f"  WARNING: no campaign folder named {args.folder!r}; "
+                  "leaving the draft unfiled.", file=sys.stderr)
     campaign = mc.create_campaign(
         list_id=audience["id"],
         title=args.title,
         subject=args.title,
         preview_text=args.preview,
         segment_id=args.segment_id,
+        folder_id=folder_id,
     )
     campaign_id = campaign["id"]
     web_id = campaign.get("web_id", "")
