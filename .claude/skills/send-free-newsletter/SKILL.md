@@ -141,27 +141,42 @@ Text}}` for a brand-color CTA, `![alt](url)` for a full-width image.
 
 ### 2. JP tweets section (optional, but most weeks)
 
-The free newsletter now supports a "What Japan's talking about this week"
-section sourced from `/find-social` shortlists. Workflow:
+The free newsletter supports a "What Japan's talking about this week" section,
+a **week-in-review** of viral JP tweets sourced from `/find-social` shortlists
+(treat it like the `/find-content` picks: survey the whole week, not just
+today). Workflow:
 
 1. Ask the user: "Want JP tweets in this newsletter? (default yes)" If they
    say no, skip to "Inputs" below and run without `--jp-social-auto`.
-2. If yes, look for a staged markdown file at
-   `inserts/jp-social-{today}.md`. If absent, stage it now:
+2. If yes, look for a staged markdown file at `inserts/jp-social-{today}.md`.
+   If absent, stage it now. **The default is a week-in-review pool**: the
+   script reads every `/find-social` shortlist from the last 7 days, dedupes by
+   tweet URL (keeping the highest-engagement copy), ranks, and stages the top 3
+   as primary picks PLUS 3 backups, so the user has alternates if they don't
+   like the first three.
 
    ```bash
-   python jp_social.py stage   # default: 3 tweets from latest /find-social shortlist
+   python jp_social.py stage   # week-in-review: 3 primary + 3 backups
    ```
+
+   Tuning flags (rarely needed): `--days N` widens/narrows the pool window,
+   `--count N` changes the primary count, `--backups N` the alternate count,
+   `--shortlist YYYY-MM-DD` pins to a single day instead of pooling the week.
 
    The script filters out news-outlet handles (denylist:
    `jp_social_news_handles.txt`), tweets that became UJ stories
    (`data/jp-social-excludes.txt`), tweets already linked from recent UJ
    posts, and tweets used in the last 4 weeks of this section. It writes a
-   draft md file at `inserts/jp-social-{today}.md` and screenshots at
-   `inserts/jp-social-{today}/tweet-N.png`.
+   draft md at `inserts/jp-social-{today}.md` (primary `### Tweet N` blocks plus
+   a non-rendered `### Backup N` section) and screenshots at
+   `inserts/jp-social-{today}/{tweet,backup}-N.png`. Each block carries a
+   `> meta:` line (likes / fit / slot / source shortlist) to help the user
+   choose.
 3. Open the staged md and ask the user to review: edit translations + the
-   `context:` blurbs, swap a pick if needed, delete a block to drop a tweet.
-   Validate after edits:
+   `context:` blurbs, swap a pick, delete a block to drop a tweet. To promote a
+   backup, rename its `### Backup N` header to `### Tweet 4` (and drop a primary
+   you're replacing). Backups left under a `Backup` header are ignored at render
+   time, so leftovers are harmless. Validate after edits:
 
    ```bash
    python jp_social.py validate inserts/jp-social-{today}.md
@@ -172,6 +187,31 @@ section sourced from `/find-social` shortlists. Workflow:
 
 If a tweet seeded a UJ story later, append its URL to
 `data/jp-social-excludes.txt` so it never resurfaces in this section.
+
+## Copy conventions for the staged sections
+
+These apply to everything you write into the JP-tweets and extras markdown
+(and to subjects/preview text):
+
+- **`en:` is a translation, not a summary.** The `en:` line under each tweet
+  must be a faithful English translation of the tweet's actual words, not your
+  exposition about it. Put the "what this is / why it matters" framing in
+  `context:` instead. The staged `en:` (from the find-social `title_en`) is
+  usually a gloss; rewrite it into a real translation of the tweet text.
+- **Double quotes, not single.** Use "double quotes" for quoted terms, titles,
+  and dialogue in all newsletter copy. Reserve single quotes only for a quote
+  nested inside a double-quoted passage. (No em/en dashes either, per the rule
+  below.)
+- **Markdown links render to HTML.** The tweet `context:` and the extras
+  `synopsis:` are passed through `inserts.render_inline`, so `[text](url)`
+  becomes a real `<a>` (brand color, underlined) and the rest is HTML-escaped.
+  Add links freely there. Do NOT put a Markdown link in the extras `title_en:`
+  (the template already wraps it in an `<a>` to the article, so a link there
+  would nest anchors).
+- **Edit-friendly formatting is tolerated.** The parsers accept the user's
+  reformatting: `> field: value` blockquote lines, trailing hard-break spaces,
+  and `url:`/`screenshot:` values wrapped as `[url](url)`. Don't fight or
+  revert that formatting.
 
 ## Steps
 
@@ -226,7 +266,9 @@ If a tweet seeded a UJ story later, append its URL to
 
    Offer **2–3 subject line variants** so the user can pick. Present them as a numbered list with the preview text below. When relevant, label which historical pattern each variant uses (e.g. "ranking", "named-brand conflict") so the user can pick by intent.
 
-3. **Confirm with the user.** Show the chosen IDs, the proposed subject, and the proposed preview. Also ask whether they want a **"Hello Loyal UJ Reader," intro block** in this newsletter (yes/no). If they already specified it in the original message (e.g. "include a personal intro" / "add a reader note"), don't ask again. Wait for approval or edits before running anything. The user often tweaks wording.
+3. **Confirm with the user.** Show the chosen IDs, the proposed subject, and the proposed preview. Wait for approval or edits before running anything. The user often tweaks wording.
+
+   **Reader-intro default (do NOT ask):** the "Hello Loyal UJ Reader," intro block is **off by default whenever an editor's note exists** (it does, almost always, per pre-flight step 1, which now opens every email). So in the normal case do not pass `--reader-intro` and do not ask about it. Only consider a reader intro if there is **no** editor's note, and even then the right move is to ask the user to write an editor's note (pre-flight step 1) rather than fall back to the reader-intro placeholder. The single exception: the user explicitly asks for a personal intro block in their message ("include a personal intro" / "add a reader note"); honor that and pass `--reader-intro`.
 
 4. **Build extras with English synopses.** This step replaces the script's built-in trend-log loader with a synopsis-rich version. Rationale: the trend log only stores Japanese titles and topics, not narrative summaries, so the script's `--extras-from-trend-log` mode renders the section without any "what happened" text. The free newsletter wants 2–3 sentences per item.
 
@@ -298,28 +340,49 @@ If a tweet seeded a UJ story later, append its URL to
 
       The synopsis should explain *what happened* in dry, factual UJ-voice prose. No editorializing, no clickbait. Keep each synopsis to 2-3 sentences (roughly 40-80 words). **No em dashes or en dashes** anywhere in the synopsis text (see Don'ts).
 
-   c. **Build the enriched extras JSON.** Write a list with the schema the template expects: `url`, `title_en`, `source`, `synopsis`, `topics`. Save to `data/last-extras.json`:
+   c. **Stage the extras to an editable markdown** (do NOT write the final JSON yet). The user edits markdown files directly; they do not want to edit HTML in Mailchimp. Use the `extras.py` helper to write `inserts/extras-{today}.md`:
+
+      ```bash
+      python -c "
+      from pathlib import Path
+      import extras as extras_mod
+      records = [
+          {
+              'url': '...',
+              'source': '...',
+              'title_en': '...',
+              'topics': ['tag1', 'tag2'],
+              'synopsis': 'Two-to-three-sentence English summary of what happened.',
+          },
+          # ... up to 4, with your written synopses
+      ]
+      out = extras_mod.stage_extras_markdown(records, Path('inserts/extras-{today}.md'), generated_at='{today}')
+      print('staged', out, 'with', len(extras_mod.parse_extras_markdown(out)), 'stories')
+      "
+      ```
+
+      `stage_extras_markdown` writes one `### Story N` block per extra (url / source / title_en / topics / synopsis) and auto-strips em/en dashes. It mirrors the JP-tweets staging file.
+
+   d. **Stop and wait for the user to edit BOTH section files.** This is the review gate, and it is the whole point: the user reviews and edits two markdown files in `inserts/` rather than editing HTML in Mailchimp.
+      - `inserts/jp-social-{today}.md` (JP tweets, from pre-flight step 2)
+      - `inserts/extras-{today}.md` (this section)
+
+      Present both files, then wait. Do not build the newsletter until the user says go. (You may propose the subject line + preview text in the same message so they can approve those too, per step 2/3.)
+
+   e. **Absorb the user's edits.** Once the user approves, parse the edited extras markdown back into the JSON the script consumes:
 
       ```bash
       python -c "
       import json
       from pathlib import Path
-      enriched = [
-          {
-              'url': '...',
-              'title_en': '...',
-              'source': '...',
-              'synopsis': 'Two-to-three-sentence English summary of what happened.',
-              'topics': ['tag1', 'tag2'],
-          },
-          # ... up to 4
-      ]
-      Path('data/last-extras.json').write_text(json.dumps(enriched, indent=2, ensure_ascii=False))
-      print(f'wrote {len(enriched)} extras')
+      import extras as extras_mod
+      recs = extras_mod.parse_extras_markdown(Path('inserts/extras-{today}.md'))
+      Path('data/last-extras.json').write_text(json.dumps(recs, indent=2, ensure_ascii=False), encoding='utf-8')
+      print('wrote', len(recs), 'extras to data/last-extras.json')
       "
       ```
 
-   d. Surface the enriched list to the user before invoking the script — so they can spot a synopsis they don't like and edit it.
+      The JP-tweets edits are absorbed automatically by `--jp-social-auto`, which reads the edited `inserts/jp-social-{today}.md` at build time. Validate it first: `python jp_social.py validate inserts/jp-social-{today}.md`.
 
    If step 4a returns 0 candidates, mention that and skip directly to step 5 with no `--extras-json` flag (and no `--extras-from-trend-log`). The script will then render no extras section.
 
@@ -341,7 +404,7 @@ If a tweet seeded a UJ story later, append its URL to
 
    Do **not** also pass `--extras-from-trend-log`; that's the synopsis-less fallback and is mutually exclusive with `--extras-json`. Only use `--extras-from-trend-log` if step 4 was skipped because the trend log returned 0 candidates AND the user explicitly wants the script to retry on its own.
 
-   The script prints a Mailchimp edit URL on success — surface that URL to the user so they can open the draft.
+   The script files the draft into the **"Unseen Japan Newsletter"** campaign folder by default (via `--folder`, matched case-insensitively; pass `--folder ""` to leave it unfiled, or another name to refile). It prints a Mailchimp edit URL on success — surface that URL to the user so they can open the draft.
 
 6. **Save state.** Only after the script exits successfully, overwrite `.claude/skills/send-free-newsletter/last-posts.json` with the IDs that were sent. Use a Python one-liner:
 
@@ -365,6 +428,23 @@ If a tweet seeded a UJ story later, append its URL to
 8. **Remind about the reader-intro placeholder.** If `--reader-intro` was passed, tell the user to replace the highlighted "[PERSONAL NOTE: ...]" paragraph in Mailchimp before sending (or delete the whole block if they decide against a note).
 
 9. **Cue the Insider follow-up (if applicable).** The script writes `data/last-free-newsletter.json` automatically — `/send-insider-newsletter` reads it later this week to wrap the free draft with the Insider article. If the user mentioned they'll send an Insider this week, remind them: "Next, run `/send-insider-newsletter` with this week's Insider post ID. It'll layer the full article on top of everything you just shipped, minus the ad slots." State file expires 3 days after this run, so the Insider send must happen within that window.
+
+## Images: the webp gotcha (now auto-handled)
+
+Mailchimp's file manager **rejects `.webp`** ("not an image, but has an image
+extension"). As of 2026-05-23 the script handles this automatically: before
+uploading each featured image it calls `wp_post.ensure_mailchimp_safe_image`,
+which detects WebP by **magic bytes** (so it also catches WebP saved with a
+`.jpg` name) and converts to JPEG via Pillow. You'll see
+`Converted WebP featured image to JPEG for post NNNNN.` in the output. No manual
+step needed; just confirm there's no `WARNING: Image upload failed` line.
+
+If you ever do need to fix an image in an already-built draft by hand: download
+a real raster (verify magic bytes, `ff d8 ff` = JPEG vs `RIFF…WEBP` = webp;
+convert with `PIL.Image.open(src).convert("RGB").save(buf, "JPEG")`), upload via
+`POST /file-manager/files` (base64 `file_data` -> `full_size_url`), then GET/PUT
+`/campaigns/{API_ID}/content` string-replacing the webp URL (use the API
+campaign id, not the web-UI edit id; the content endpoint 404s on the latter).
 
 ## Markdown inserts
 
@@ -418,6 +498,8 @@ This is the single most important rule in this skill. Read it before every run.
 
 3. If the count is nonzero, find the source (template, insert file, extras JSON, or a Python constant) and fix it before proceeding. Do NOT just edit the rendered HTML.
 4. After any edit to a template, Python constant, or insert file, re-grep the project with the Grep tool using pattern `—|–|&mdash;|&ndash;` (exclude `data/` and `.claude/skills/`). Fix any new hit before re-rendering.
+
+**Caveat: `--dump-html` renders SAMPLE posts/extras, not your real ones.** It's a template/style preview: it uses `extras_mod.SAMPLE_EXTRAS` and dummy posts (it DOES render the real jp-social section and editor's note). So the dump-html dash check validates the template, jp-social, and editor's note, but NOT your real post excerpts or extras synopses. Cover those by also dash-checking `data/last-extras.json` and the staged `inserts/*.md` (the user-supplied text), and treat the **authoritative** check as the built campaign's content: after the run, `GET /campaigns/{API_ID}/content` and re-run the banned-dash regex on that HTML (you're already there if you're patching the webp image). WordPress post excerpts are the one source not stripped by `strip_banned_dashes`, so that final check on real content is what catches an em dash in an excerpt.
 
 This rule exists because em dashes are a tell of LLM-generated copy and conflict with UJ's editorial voice. Failing this check has happened before and is a real annoyance to fix after the fact.
 

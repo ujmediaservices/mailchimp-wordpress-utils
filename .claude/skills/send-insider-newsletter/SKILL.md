@@ -129,6 +129,16 @@ Do not proceed.
    Insider-segment ID and confirm it with the user before sending. If the
    user wants a different one, repeat the segment-picker bash from "Inputs".
 
+   **Caveat (confirmed 2026-05-23):** the real audience, the "Unseen Japan
+   Insider All" segment, is a Mailchimp **advanced segment** that the Marketing
+   API cannot see or set (its id is `mc-...-MonolithAdvanced-NNNNN`). The
+   cached `--insider-segment-id` (`4230717`) is the API-visible `insider`
+   **tag** (~154), which is close but NOT the same audience. So the segment on
+   the created draft is only a placeholder, and **the user must switch it to
+   "Unseen Japan Insider All" in the Mailchimp UI before sending.** Don't try
+   to automate this; see memory `reference_mailchimp_advanced_segments`. Always
+   flag this to the user when you surface the draft URL.
+
 5. **Dry-run the HTML** (recommended on first weekly run, optional after):
 
    ```bash
@@ -148,8 +158,10 @@ Do not proceed.
        --subject "APPROVED_SUBJECT" --preview "APPROVED_PREVIEW"
    ```
 
-   The script prints a Mailchimp edit URL on success. Surface it to the
-   user so they can open the draft in Mailchimp.
+   The script files the draft into the **"UJ Insider"** campaign folder by
+   default (via `--folder`, matched case-insensitively; pass `--folder ""` to
+   leave it unfiled). It prints a Mailchimp edit URL on success. Surface it to
+   the user so they can open the draft in Mailchimp.
 
 7. **Banned-dash verification.** Before the live send, run the same
    banned-dash grep used in `/send-free-newsletter` against the rendered
