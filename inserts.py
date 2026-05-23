@@ -22,21 +22,45 @@ from pathlib import Path
 _BRAND = "#b3421d"
 
 
+def _emphasis(escaped: str) -> str:
+    """Convert **bold** -> <strong> and *italic* -> <em> in already-escaped text.
+
+    Run after HTML-escaping so the inserted tags pass through raw while their
+    contents stay escaped. Bold first so `**` isn't consumed by the single-`*`
+    rule.
+    """
+    escaped = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
+    escaped = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<em>\1</em>", escaped)
+    return escaped
+
+
 def _inline(text: str) -> str:
-    """Convert inline `[text](url)` to <a>, escape everything else."""
+    """Convert inline `[text](url)`, `**bold**`, `*italic*`; escape everything else."""
     out: list[str] = []
     pos = 0
     for m in re.finditer(r"\[([^\]]+)\]\(([^)]+)\)", text):
-        out.append(html_mod.escape(text[pos:m.start()]))
-        label = html_mod.escape(m.group(1))
+        out.append(_emphasis(html_mod.escape(text[pos:m.start()])))
+        label = _emphasis(html_mod.escape(m.group(1)))
         href = html_mod.escape(m.group(2), quote=True)
         out.append(
             f'<a href="{href}" target="_blank" '
-            f'style="color:{_BRAND}; text-decoration:underline;">{label}</a>'
+            f'style="color:{_BRAND}; text-decoration:underline; '
+            f'font-size:inherit; line-height:inherit;">{label}</a>'
         )
         pos = m.end()
-    out.append(html_mod.escape(text[pos:]))
+    out.append(_emphasis(html_mod.escape(text[pos:])))
     return "".join(out)
+
+
+def render_inline(text: str) -> str:
+    """Public: convert inline `[text](url)` to a branded <a>, escape the rest.
+
+    Used by jp_social / extras to linkify the `context` and `synopsis` fields
+    that the user may edit to include Markdown links. Safe on plain text (just
+    HTML-escapes it). Do NOT use on fields already wrapped in an <a> by the
+    template (e.g. extras `title_en`), or you get nested anchors.
+    """
+    return _inline(text)
 
 
 def _image_html(alt: str, url: str) -> str:
