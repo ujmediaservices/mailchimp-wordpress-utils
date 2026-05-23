@@ -1,26 +1,24 @@
-"""Screenshot an X (Twitter) tweet via headless Chrome.
+"""Screenshot an X (Twitter) tweet as a clean embed card.
 
-Why not Playwright? X aggressively blocks Playwright-launched browsers; even a
-persistent profile with stealth patches gets rate-limited or shown the login
-wall after a few requests. We've been down that road.
+We never navigate to x.com directly: headless Chrome (and Playwright) hitting
+x.com/user/status/id gets the login wall. Instead we use Twitter's public
+oEmbed endpoint (https://publish.twitter.com/oembed), which returns a
+blockquote + widgets.js URL. Loaded in a local HTML wrapper, widgets.js
+upgrades the blockquote into the real tweet iframe (avatar, media, engagement,
+"Read replies"). It is the same public widget any site uses to embed a tweet. This
+rendering surface does NOT trip X's bot wall (that wall is for x.com page
+navigation, which we avoid).
 
-Why not screenshot the X URL directly? Same problem: headless Chrome hitting
-x.com/user/status/id hits the login wall and shows nothing useful.
-
-What works: Twitter's public oEmbed endpoint
-(https://publish.twitter.com/oembed) returns a blockquote + a widgets.js URL.
-Loading that blockquote in a local HTML wrapper with widgets.js produces a
-clean, branded tweet card without any login requirement — the same widget any
-public site uses to embed tweets. Headless Chrome screenshots the rendered
-wrapper.
-
-Fallback ladder:
-1. oEmbed wrapper (this script's default — clean card, public surface)
-2. Direct X URL (this script's fallback — usually shows login wall but
-   produces a file Jay can manually replace)
-3. (NOT yet implemented) WordPress Embedly route — POST the tweet URL to the
-   WP `/wp-json/oembed/1.0/proxy` endpoint, which auto-falls-back to Embedly
-   when X's own oEmbed is down. Add this tier if both above stop working.
+Capture ladder (capture_tweet tries in order):
+1. Playwright (PRIMARY): render the local oEmbed wrapper, wait for widgets.js
+   to produce `.twitter-tweet-rendered`, and screenshot just that element ->
+   a tight, clean card. (Earlier lore that "Playwright fails for X" was about
+   navigating x.com itself; rendering the local public widget is fine.)
+2. One-shot headless Chrome on the same wrapper (legacy fallback). This fired
+   the screenshot before the iframe painted, so it often captured the bare
+   unstyled blockquote; kept only as a fallback if Playwright is unavailable.
+3. Direct X URL (last resort, usually the login wall, but leaves a file Jay
+   can replace by hand).
 
 Usage:
     python screenshot_x.py --url https://x.com/.../status/... --out out.png
@@ -99,14 +97,74 @@ def build_wrapper_html(blockquote_html: str) -> str:
         "<!doctype html>\n"
         '<html><head><meta charset="utf-8">'
         "<style>"
-        "body { margin: 0; padding: 12px; background: #ffffff; "
+        "body { margin: 0; padding: 0; background: #ffffff; "
         'font-family: "Helvetica Neue", Arial, sans-serif; }'
+        ".twitter-tweet { margin: 0 !important; }"
         "</style></head><body>\n"
         f"{blockquote_html}\n"
         '<script async src="https://platform.twitter.com/widgets.js" '
         'charset="utf-8"></script>\n'
         "</body></html>\n"
     )
+
+
+def screenshot_via_playwright(
+    tweet_url: str, out_path: Path, *,
+    card_width: int = 550, scale: int = 2, timeout_ms: int = 30000,
+) -> bool:
+    """Render the oEmbed widget with Playwright and screenshot the rendered card.
+
+    This is the primary path: it waits for widgets.js to fully upgrade the
+    blockquote into the real tweet iframe (avatar, media, engagement, "Read
+    replies") and captures just that element, so the result is a clean embed
+    card rather than the bare fallback blockquote. The legacy one-shot
+    `--screenshot` Chrome path fired before the iframe painted, producing
+    unstyled text.
+    """
+    try:
+        embed = fetch_oembed(tweet_url)
+    except (requests.RequestException, json.JSONDecodeError) as exc:
+        print(f"  oEmbed fetch failed: {exc}", file=sys.stderr)
+        return False
+    blockquote = (embed.get("html") or "").strip()
+    if not blockquote:
+        print("  oEmbed returned no html.", file=sys.stderr)
+        return False
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("  Playwright not installed; falling back.", file=sys.stderr)
+        return False
+
+    html = build_wrapper_html(blockquote)
+    out_abs = str(Path(out_path).absolute())
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            try:
+                page = browser.new_page(
+                    viewport={"width": card_width + 60, "height": 1800},
+                    device_scale_factor=scale,
+                )
+                page.set_content(html, wait_until="domcontentloaded")
+                page.wait_for_selector(".twitter-tweet-rendered", timeout=timeout_ms)
+                # Let the embedded media + engagement counts paint.
+                page.wait_for_timeout(3500)
+                el = (page.query_selector(".twitter-tweet-rendered")
+                      or page.query_selector("twitter-widget"))
+                if el is None:
+                    print("  No rendered widget element found.", file=sys.stderr)
+                    return False
+                el.screenshot(path=out_abs)
+            finally:
+                browser.close()
+    except Exception as exc:  # noqa: BLE001 - any render failure -> fall back
+        print(f"  Playwright render failed: {exc}", file=sys.stderr)
+        return False
+
+    p_out = Path(out_path)
+    return p_out.is_file() and p_out.stat().st_size > 0
 
 
 def screenshot_via_oembed(
@@ -205,6 +263,10 @@ def capture_tweet(
     out.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"  Capturing {tweet_url} -> {out}", file=sys.stderr)
+    # Primary: Playwright renders the widget and captures a tight, clean card.
+    if screenshot_via_playwright(tweet_url, out):
+        return out
+    # Legacy fallback: one-shot headless Chrome on the oEmbed wrapper.
     if screenshot_via_oembed(tweet_url, out, width, height):
         return out
     if screenshot_direct_url(tweet_url, out, width, height):
