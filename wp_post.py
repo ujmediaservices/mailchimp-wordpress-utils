@@ -10,6 +10,7 @@ existing one-off-send workflow.
 from __future__ import annotations
 
 import html as html_mod
+import io
 import os
 import re
 import sys
@@ -41,6 +42,9 @@ def _raw_blocks_to_html(raw: str) -> str:
     html = re.sub(r"\[/swpm_protected\]", "", html)
     html = re.sub(r"\[elementor-template[^\]]*\]", "", html)
     html = re.sub(r"\[[a-zA-Z_-]+[^\]]*\]", "", html)
+    # Closing shortcodes start with "[/" so the opening-tag rule above misses
+    # them (e.g. [/uj_insider_gate], which was leaking into the Insider body).
+    html = re.sub(r"\[/[a-zA-Z_-]+\]", "", html)
     return html.strip()
 
 
@@ -115,6 +119,44 @@ def download_image(
     resp.raise_for_status()
     local_path.write_bytes(resp.content)
     return local_path
+
+
+# ---------------------------------------------------------------------------
+# Mailchimp image safety: Mailchimp's file manager rejects WebP uploads
+# ("not an image, but has an image extension"). Detect WebP by magic bytes
+# (so it also catches WebP saved with a .jpg name) and convert to JPEG.
+# ---------------------------------------------------------------------------
+
+def is_webp_bytes(data: bytes) -> bool:
+    """True if `data` is a WebP image (RIFF....WEBP), regardless of extension."""
+    return len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+
+
+def webp_bytes_to_jpeg(data: bytes, *, quality: int = 88) -> bytes:
+    """Convert WebP (or any Pillow-readable) image bytes to JPEG bytes."""
+    from PIL import Image  # lazy import; only needed when a conversion happens
+    im = Image.open(io.BytesIO(data)).convert("RGB")
+    buf = io.BytesIO()
+    im.save(buf, format="JPEG", quality=quality)
+    return buf.getvalue()
+
+
+def ensure_mailchimp_safe_image(
+    data: bytes, filename: str,
+) -> tuple[bytes, str, bool]:
+    """Return (bytes, filename, converted) ready for a Mailchimp upload.
+
+    If `data` is WebP, convert it to JPEG and swap the filename extension to
+    .jpg. Otherwise return the inputs unchanged. The third element flags
+    whether a conversion happened (handy for logging).
+    """
+    if not is_webp_bytes(data):
+        return data, filename, False
+    jpeg = webp_bytes_to_jpeg(data)
+    new_name = re.sub(r"\.[A-Za-z0-9]+$", ".jpg", filename)
+    if not new_name.lower().endswith(".jpg"):
+        new_name += ".jpg"
+    return jpeg, new_name, True
 
 
 def add_paragraph_spacing(
