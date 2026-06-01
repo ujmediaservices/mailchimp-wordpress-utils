@@ -42,7 +42,7 @@ INSIDER_BLURB = (
     '<br /><br />'
     '<a href="https://unseen-japan.com/subscribe">Upgrade to our Insider '
     'newsletter</a> to get access to this and <a href="https://unseen-=japan.com/insider">all members-only content</a>. '
-    "Plus, you'll get ad-free website access - over eight years of "
+    "You'll get a special ad-free newsletter plus ad-free website access - over eight years of "
     'Japan coverage, distraction-free.'
 )
 
