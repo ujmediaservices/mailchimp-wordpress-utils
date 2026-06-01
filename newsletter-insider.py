@@ -211,8 +211,10 @@ def render_html(
     carried_posts: list[dict],
     wp_site: str | None = None, wp_auth: tuple[str, str] | None = None,
 ) -> str:
-    body_html = wp_post.add_paragraph_spacing(
-        insider_post["content_html"], wp_site=wp_site, wp_auth=wp_auth,
+    body_html = strip_banned_dashes(
+        wp_post.add_paragraph_spacing(
+            insider_post["content_html"], wp_site=wp_site, wp_auth=wp_auth,
+        )
     )
     env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)))
     template = env.get_template(TEMPLATE_NAME)

@@ -178,9 +178,24 @@ Do not proceed.
    "
    ```
 
-   If the count is nonzero, find the source (the Insider article itself is
-   the most likely culprit — fix in WordPress and re-run) and resolve before
-   the live send.
+   If the count is nonzero, find the source and resolve before the live send.
+   **NEVER edit the Insider WordPress post to fix a dash.** Insider posts have
+   their own editing process the user manages directly; touching them via the
+   REST API is forbidden (see memory `feedback_never_edit_insider_posts`).
+
+   - **Article-body dashes** (anything from the Insider WP post — body text,
+     sources section, etc.) are auto-stripped at render time inside
+     `newsletter-insider.py` (`render_html` wraps `body_html` in
+     `strip_banned_dashes`). If a dash from the post body slips through to
+     the rendered HTML, the bug is in that strip path, fix it there. Do not
+     touch WordPress.
+   - **Non-article dashes** (editor's note, JP tweets `context:`/`en:`,
+     extras `synopsis:`, subject/preview, template defaults) are the only
+     cases that need a real source fix. Edit the inserts/* markdown, the
+     extras JSON, the template, or the Python constant as appropriate.
+   - **If you cannot locate the source**, surface the dump-html context (the
+     ~60 chars around each hit) to the user and ask. Do not fix-by-API
+     anywhere upstream of the user's editorial control.
 
 ## Insider audience expectations
 
