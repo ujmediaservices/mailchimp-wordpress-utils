@@ -40,7 +40,7 @@ This file is per-machine runtime state — it is gitignored and should not be co
 
 ## No post list provided
 
-If the user invoked the skill without specifying posts, fetch posts published in the **last 8 days** from WordPress, exclude any that appear in `last-posts.json`, and show the remaining candidates as `Letter | ID | Date | Title` (most-recent first), with letters `A`, `B`, `C`, … assigned in display order. Also mention *which* IDs were excluded so the user knows what was filtered. Then stop — do not proceed to steps 1–5 until the user picks which posts to include.
+If the user invoked the skill without specifying posts, fetch posts published in the **last 8 days** from WordPress, exclude any that appear in `last-posts.json`, and show the remaining candidates as `Letter | ID | Date | Title` (most-recent first), with letters `A`, `B`, `C`, … assigned in display order. Also mention *which* IDs were excluded so the user knows what was filtered. Then **propose a slate** (see "Proactive slate recommendation" below) and wait for the user's approval or edits — do not stop at the table.
 
 Use the WordPress REST API's `after` parameter to enforce the 8-day window server-side (compute the cutoff from the current date, in ISO 8601). Set `per_page=50` so the window isn't artificially capped — UJ rarely publishes more than that in 8 days, but the cap should not be the limiting factor.
 
@@ -81,7 +81,23 @@ If the 8-day window returns fewer than 5 candidates after filtering, tell the us
 
 **Annotate each candidate with a lead score.** When rendering the candidate list, score each row using the rubric in "Lead candidate scoring" below and add a `Lead` column so the user can see which posts are strongest. Format the table as `Letter | ID | Date | Lead | Title`. Score from the title alone unless it's ambiguous, in which case fetch the excerpt for that one post.
 
-**Remember the letter→ID mapping** you displayed — you'll need it to translate the user's reply. Present the list, then ask the user which posts to include (by letter, e.g. `A C E F G`) and which is the lead. Once they reply, translate the letters back to post IDs in the same order, and continue from step 1 with those IDs.
+**Remember the letter→ID mapping** you displayed — you'll need it to translate the user's reply. Present the list, then make your slate recommendation per below. Once the user replies (approving, editing, or giving their own list), translate the letters back to post IDs in the same order, and continue from step 1 with those IDs.
+
+### Proactive slate recommendation
+
+After the scored candidate table, **always propose a 5-8 post slate with a recommended lead** rather than asking the user to pick from scratch. The user wants the skill to do the editorial reasoning; punting the selection back to them defeats the purpose of the scoring rubric.
+
+How to build the slate:
+
+- **Target size:** 6-7 posts (5 minimum, 8 maximum).
+- **Lead position:** name one post as the lead, placed **third** in your proposed order (the standing default). Pick the strongest hook for the lead — favor `strong` posts that also fit a high-CTR pattern (foreigner-friction, named-brand controversy, direct quote, specific number, real-stakes question).
+- **Mix and variety:** if four candidates cluster on one topic (e.g. women's issues, food, history), pick the 1-2 strongest from the cluster rather than all of them. The newsletter reads better with thematic variety.
+- **Insider posts go in position 4** (standing default). If the slate contains an `[Insider]` post, it always sits in the fourth slot — directly after the lead, before the back-half rollout. Always include an available Insider; the free newsletter auto-appends the paywall blurb and Insider drops convert well from the free list.
+- **Drop the `weak` posts** by default unless they're needed for slot variety. Travel guides and historical bios without a hook stay out unless the slate is otherwise thin.
+- **Annotate each pick** with a one-line reason (e.g. "B — Oshikatsu sex work — strong cultural-norm violation").
+- **Ask the user to approve, swap, or reorder.** Default to the recommended slate if they just say "go" or "approved."
+
+Only after the user confirms (or edits) the slate, proceed to step 1.
 
 ## Lead candidate scoring
 
@@ -139,17 +155,19 @@ Then write the file together. Markdown vocabulary is the same as for any
 insert: `## Heading`, paragraphs with `[text](url)` links, `{{URL Button
 Text}}` for a brand-color CTA, `![alt](url)` for a full-width image.
 
-### 2. JP tweets section (optional, but most weeks)
+### 2. JP tweets section (always include, do not ask)
 
-The free newsletter supports a "What Japan's talking about this week" section,
+The free newsletter includes a "What Japan's talking about this week" section,
 a **week-in-review** of viral JP tweets sourced from `/find-social` shortlists
 (treat it like the `/find-content` picks: survey the whole week, not just
-today). Workflow:
+today). This section is a **standing default** — always stage it as part of
+pre-flight; do not ask the user whether to include it. The only time to skip
+is if the user explicitly says to skip it in their invocation message, or if
+the pool returns zero candidates. Workflow:
 
-1. Ask the user: "Want JP tweets in this newsletter? (default yes)" If they
-   say no, skip to "Inputs" below and run without `--jp-social-auto`.
-2. If yes, look for a staged markdown file at `inserts/jp-social-{today}.md`.
-   If absent, stage it now. **The default is a week-in-review pool**: the
+1. Look for a staged markdown file at `inserts/jp-social-{today}.md`. If absent,
+   stage it now (run this in parallel with the other pre-flight work — it takes
+   ~10s for screenshots). **The default is a week-in-review pool**: the
    script reads every `/find-social` shortlist from the last 7 days, dedupes by
    tweet URL (keeping the highest-engagement copy), ranks, and stages the top 3
    as primary picks PLUS 3 backups, so the user has alternates if they don't
@@ -172,7 +190,7 @@ today). Workflow:
    `inserts/jp-social-{today}/{tweet,backup}-N.png`. Each block carries a
    `> meta:` line (likes / fit / slot / source shortlist) to help the user
    choose.
-3. Open the staged md and ask the user to review: edit translations + the
+2. Open the staged md and ask the user to review: edit translations + the
    `context:` blurbs, swap a pick, delete a block to drop a tweet. To promote a
    backup, rename its `### Backup N` header to `### Tweet 4` (and drop a primary
    you're replacing). Backups left under a `Backup` header are ignored at render
@@ -182,7 +200,7 @@ today). Workflow:
    python jp_social.py validate inserts/jp-social-{today}.md
    ```
 
-4. Later, pass `--jp-social-auto` to `newsletter-free.py` so it loads the
+3. Later, pass `--jp-social-auto` to `newsletter-free.py` so it loads the
    staged file. Screenshots get uploaded to Mailchimp's CDN automatically.
 
 If a tweet seeded a UJ story later, append its URL to
@@ -191,17 +209,71 @@ If a tweet seeded a UJ story later, append its URL to
 ## Copy conventions for the staged sections
 
 These apply to everything you write into the JP-tweets and extras markdown
-(and to subjects/preview text):
+(and to subjects/preview text). **Read this section every run before writing
+or editing `en:` and `context:` — getting the JP-tweets section wrong is the
+most common failure mode of this skill.**
 
-- **`en:` is a translation, not a summary.** The `en:` line under each tweet
-  must be a faithful English translation of the tweet's actual words, not your
-  exposition about it. Put the "what this is / why it matters" framing in
-  `context:` instead. The staged `en:` (from the find-social `title_en`) is
-  usually a gloss; rewrite it into a real translation of the tweet text.
+### `en:` MUST be a direct translation of the tweet text
+
+The `en:` line sits **directly under the tweet screenshot in the newsletter**.
+Readers expect to see what the tweet *says*. Not what it's about. Not a gloss.
+A translation.
+
+- The source for `en:` is the `jp:` line right above it — i.e., the literal
+  tweet text. Translate that, faithfully, in natural English.
+- The find-social staging seeds `en:` from `title_en`, which is a summary /
+  search title, NOT a translation. **You must rewrite it every time.** Treat
+  the staged `en:` as untrusted draft material.
+- Do not summarize. Do not analyze. Do not editorialize. If the tweet is
+  a quote, render it as a quote (English double quotes). If it's a comment
+  by the poster about something, render it as that comment.
+- Keep nuance: tone particles, modal expressions, register. A casual tweet
+  reads casually; a snarky tweet reads snarky.
+
+**Right vs. wrong:**
+
+| jp: | WRONG `en:` (summary) | RIGHT `en:` (translation) |
+|---|---|---|
+| `ありえん日本語みつけて笑い止まらん` | `"Impossible Japanese" spotted, a viral roundup of mangled/AI-garbled Japanese` | `"Found some impossible Japanese, can't stop laughing."` |
+| `狩猟免許を取りたいんだ、と父親に話したら…「身辺調査で確実に落とされます」` | `Father confesses he was a 1960s-70s student activist, and that's why his daughter can't get a hunting license` | `"I told my dad I wanted to get a hunting license, and he said... 'You're definitely going to fail the background check.'"` |
+
+### `context:` is reader-facing UJ-voice copy
+
+`context:` appears in the rendered newsletter as a paragraph beneath the tweet
+and translation. Its job is to explain, **for the newsletter reader**, what
+the tweet is about, what the surrounding story or social phenomenon is, and
+why it caught attention this week. It is NOT a note to the editor.
+
+- **Audience: the newsletter reader.** Someone who may not follow JP Twitter,
+  may not know the cultural backstory, and wants the "what's going on here"
+  in plain English. Do not address the editor. Do not reference shortlists,
+  weeks, cycles, likes counts, find-social slot tags, "this maps to UJ's X
+  pattern", or "good UJ depth piece" framing. Those belong in the
+  `> meta:` line above the block, not in copy that ships.
+- **Voice: UJ.** Dry, curious, slightly irreverent. No clickbait
+  ("you won't believe…"). No marketing voice. No machine-translated cadence
+  ("a collection of absurd, broken Japanese", "Top-converting language-
+  curiosity pattern" — these read like an analytics dashboard pasted into
+  the email).
+- **Length: 1-3 sentences.** Tight. Give the reader the cultural footing
+  to enjoy the tweet, then stop.
+- **Anchor in the tweet's actual content,** not in the find-social rationale
+  for picking it. If the tweet is about a hunting license, the context is
+  about hunting licenses and the surrounding story, not about why this
+  fits an "essay-social" slot.
+
+**Right vs. wrong context:**
+
+| Tweet topic | WRONG (editor-facing, machine-voiced) | RIGHT (reader-facing, UJ voice) |
+|---|---|---|
+| Mangled Japanese roundup | `Still the run's #1 thread, up from 192k likes last cycle, a collection of absurd, broken Japanese. Top-converting language-curiosity pattern. Recurring from 2026-05-24.` | `The runaway viral thread of the week. A user kicked off a collection of mistranslated, AI-garbled, and just plain broken Japanese spotted in the wild, and Japanese users have been piling in for days with their own finds.` |
+| Hunting-license background check | `Perfectly-shareable evidence that the Japanese state still tracks 60s-70s leftist activism on background-check records decades later. Tight hook for long-form UJ history piece.` | `The reveal further down the thread: the poster's father was a left-wing student activist in the 1960s and 70s, and Japanese police kept his name flagged. Decades on, those records still shape what his daughter can legally do, hunting license included.` |
+
+### Other conventions
+
 - **Double quotes, not single.** Use "double quotes" for quoted terms, titles,
-  and dialogue in all newsletter copy. Reserve single quotes only for a quote
-  nested inside a double-quoted passage. (No em/en dashes either, per the rule
-  below.)
+  and dialogue. Reserve single quotes only for a quote nested inside a
+  double-quoted passage. (No em/en dashes either, per the rule below.)
 - **Markdown links render to HTML.** The tweet `context:` and the extras
   `synopsis:` are passed through `inserts.render_inline`, so `[text](url)`
   becomes a real `<a>` (brand color, underlined) and the rest is HTML-escaped.
@@ -394,7 +466,7 @@ These apply to everything you write into the JP-tweets and extras markdown
 
    Add `--reader-intro` to the command if the user said yes in step 3. The script then inserts a "Hello Loyal UJ Reader," placeholder block at the top of the email body; the user replaces the placeholder paragraph in Mailchimp before sending (or deletes the whole block if they change their mind).
 
-   Add `--jp-social-auto` (or `--jp-social inserts/jp-social-YYYY-MM-DD.md` to an explicit path) if the user opted in to JP tweets per pre-flight step 2 above. Omit both flags to skip the section.
+   Add `--jp-social-auto` to load the staged JP tweets — this is the default per pre-flight step 2 (always include). Use `--jp-social inserts/jp-social-YYYY-MM-DD.md` only if the file lives at a non-default path. Omit both flags only when the user explicitly said to skip the section for this run.
 
    The editor's note is loaded automatically from `inserts/editors-notes.md` — no flag needed. The script hard-errors if that file is missing/empty (pre-flight step 1 should have caught this; if you hit it here, go back and write the note). After a successful send the file is auto-archived to `inserts/archive/`, so the next weekly run will start clean.
 
