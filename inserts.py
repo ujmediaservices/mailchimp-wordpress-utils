@@ -35,21 +35,33 @@ def _emphasis(escaped: str) -> str:
 
 
 def _inline(text: str) -> str:
-    """Convert inline `[text](url)`, `**bold**`, `*italic*`; escape everything else."""
-    out: list[str] = []
-    pos = 0
-    for m in re.finditer(r"\[([^\]]+)\]\(([^)]+)\)", text):
-        out.append(_emphasis(html_mod.escape(text[pos:m.start()])))
+    """Convert inline `[text](url)`, `**bold**`, `*italic*`; escape everything else.
+
+    Links are stashed as `\\x00L<n>\\x00` placeholders before emphasis runs, so
+    an italic or bold span that wraps a link still matches (the asterisks
+    bracket the placeholder along with surrounding prose). The placeholder
+    format contains no `*`, so it can't accidentally satisfy `_emphasis`.
+    """
+    placeholders: dict[str, str] = {}
+
+    def _stash(m: re.Match) -> str:
+        idx = len(placeholders)
         label = _emphasis(html_mod.escape(m.group(1)))
         href = html_mod.escape(m.group(2), quote=True)
-        out.append(
+        anchor = (
             f'<a href="{href}" target="_blank" '
             f'style="color:{_BRAND}; text-decoration:underline; '
             f'font-size:inherit; line-height:inherit;">{label}</a>'
         )
-        pos = m.end()
-    out.append(_emphasis(html_mod.escape(text[pos:])))
-    return "".join(out)
+        key = f"\x00L{idx}\x00"
+        placeholders[key] = anchor
+        return key
+
+    stashed = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", _stash, text)
+    emphasized = _emphasis(html_mod.escape(stashed))
+    for key, anchor in placeholders.items():
+        emphasized = emphasized.replace(key, anchor)
+    return emphasized
 
 
 def render_inline(text: str) -> str:
