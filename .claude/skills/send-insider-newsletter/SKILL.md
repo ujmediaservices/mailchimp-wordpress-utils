@@ -103,17 +103,17 @@ Do not proceed.
 
    ```bash
    python -c "
-   import os, requests, html
-   base = os.environ['WORDPRESS_URL'].rstrip('/')
-   auth = (os.environ['WORDPRESS_USERNAME'], os.environ['WORDPRESS_PASSWORD'])
+   import wp_post
+   site, auth = wp_post.get_wp_config()
    pid = 88516  # the Insider post ID
-   r = requests.get(f'{base}/wp-json/wp/v2/posts/{pid}', params={'_fields': 'title,link,excerpt'}, auth=auth, timeout=30)
-   r.raise_for_status()
-   d = r.json()
-   print(pid, '|', html.unescape(d['title']['rendered']))
-   print('  ', d['link'])
+   d = wp_post.fetch_post_full(site, pid, auth)
+   print(pid, '|', d['title'])
+   print('  ', d['url'])
    "
    ```
+
+   (`wp_post.fetch_post_full` is the same helper `newsletter-insider.py` uses to
+   pull the article body, so the title/URL you confirm here match what ships.)
 
    If the title doesn't contain `[Insider]`, ask the user to double-check the
    ID — you can still proceed if they confirm, but flag it.
@@ -169,14 +169,12 @@ Do not proceed.
    is zero:
 
    ```bash
-   python newsletter-insider.py --dump-html --insider-post-id 88516 | python -c "
-   import sys, re
-   text = sys.stdin.read()
-   hits = re.findall(r'—|–|&mdash;|&ndash;|&#8212;|&#x2014;|&#8211;|&#x2013;', text)
-   print(f'banned-dash count: {len(hits)}')
-   sys.exit(1 if hits else 0)
-   "
+   python newsletter-insider.py --dump-html --insider-post-id 88516 | python check_dashes.py
    ```
+
+   This is the same shared `check_dashes.py` helper `/send-free-newsletter`
+   uses; it carries the identical banned-dash regex and exits nonzero on any
+   hit. Add `--context` to print a ~60-char window around each hit.
 
    If the count is nonzero, find the source and resolve before the live send.
    **NEVER edit the Insider WordPress post to fix a dash.** Insider posts have
@@ -193,9 +191,10 @@ Do not proceed.
      extras `synopsis:`, subject/preview, template defaults) are the only
      cases that need a real source fix. Edit the inserts/* markdown, the
      extras JSON, the template, or the Python constant as appropriate.
-   - **If you cannot locate the source**, surface the dump-html context (the
-     ~60 chars around each hit) to the user and ask. Do not fix-by-API
-     anywhere upstream of the user's editorial control.
+   - **If you cannot locate the source**, surface the dump-html context
+     (`check_dashes.py --context` prints the ~60 chars around each hit) to the
+     user and ask. Do not fix-by-API anywhere upstream of the user's editorial
+     control.
 
 ## Insider audience expectations
 
