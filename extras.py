@@ -37,7 +37,7 @@ DEFAULT_TREND_LOG = Path(
 )
 RELEVANCE_FLOOR = {"HIGH", "VERY HIGH"}
 DEFAULT_DAYS = 7
-DEFAULT_CAP = 4
+DEFAULT_CAP = 2
 
 
 def fetch_post_body(

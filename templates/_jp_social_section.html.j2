@@ -13,7 +13,7 @@
     <a name="jp-social"></a>
     <h2 style="margin: 0 0 8px 0;">What Japan's talking about this week</h2>
     <p style="font-size: 16px; line-height: 1.5; color: #666666; margin: 0 0 20px 0;">
-      Viral discussions from the Japanese-language internet, translated.
+      Viral discussions about Japan from across social media.
     </p>
 
     {% for tweet in jp_social %}
@@ -29,12 +29,20 @@
       </tr>
       <tr>
         <td>
+          {% if tweet.jp %}
           <p style="font-size: 14px; line-height: 1.5; color: #666666; margin: 0 0 6px 0; font-style: italic;">
             <strong style="color: #222222;">JP:</strong> {{ tweet.jp }}
           </p>
           <p style="font-size: 16px; line-height: 1.5; color: #222222; margin: 0 0 10px 0;">
             <strong>EN:</strong> {{ tweet.en }}
           </p>
+          {% else %}
+          {# English-origin tweet: screenshot already shows the text, so render it
+             plain (no JP/EN translation framing) for accessibility. #}
+          <p style="font-size: 16px; line-height: 1.5; color: #222222; margin: 0 0 10px 0;">
+            {{ tweet.en }}
+          </p>
+          {% endif %}
           <p style="font-size: 15px; line-height: 1.5; color: #444444; margin: 0 0 8px 0;">
             {{ tweet.context }}
           </p>

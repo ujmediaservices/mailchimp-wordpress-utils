@@ -39,3 +39,4 @@ NHKyokohama
 NHKchiba
 NHKsaitama
 NHKtokyo_lnews
+asahicom

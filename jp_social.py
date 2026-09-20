@@ -620,11 +620,17 @@ def load_section(
                 image_url = screenshot_abs.resolve().as_uri()
         else:
             image_url = screenshot_abs.resolve().as_uri()
+        # An English-origin tweet (about Japan, from the English-language
+        # internet) carries no Japanese source text, staged as `jp: None`.
+        # Normalize that sentinel to empty so the template skips the JP/EN
+        # translation lines and just shows the tweet + context.
+        jp_raw = (block["jp"] or "").strip()
+        jp_val = "" if jp_raw.lower() == "none" else jp_raw
         out.append({
             "url": block["url"],
             "author": block["author"],
             "image_url": image_url,
-            "jp": block["jp"],
+            "jp": jp_val,
             # en/context render as raw HTML (template autoescape is off), so
             # linkify any [text](url) the user added and HTML-escape the rest.
             "en": inserts_mod.render_inline(block["en"]),
@@ -686,8 +692,8 @@ def main() -> None:
         help="Pin to one shortlist date (YYYY-MM-DD), single-day mode. "
              "Default: week-in-review pool across recent shortlists.",
     )
-    p_stage.add_argument("--count", type=int, default=3,
-                         help="Primary picks to stage. Default 3.")
+    p_stage.add_argument("--count", type=int, default=2,
+                         help="Primary picks to stage. Default 2.")
     p_stage.add_argument(
         "--days", type=int, default=7,
         help="Week-pool window in days (ignored if --shortlist is given). "
