@@ -45,6 +45,7 @@ def _raw_blocks_to_html(raw: str) -> str:
     # Closing shortcodes start with "[/" so the opening-tag rule above misses
     # them (e.g. [/uj_insider_gate], which was leaking into the Insider body).
     html = re.sub(r"\[/[a-zA-Z_-]+\]", "", html)
+    html = _replace_youtube_embeds(html)
     return html.strip()
 
 
@@ -55,17 +56,129 @@ def _clean_rendered_html(rendered: str) -> str:
         el.decompose()
     for form in soup.find_all("form"):
         form.decompose()
+    return _replace_youtube_embeds(str(soup))
+
+
+_YOUTUBE_ID_RE = re.compile(
+    r"(?:youtube\.com/watch\?(?:[^\"\s]*&)?v=|youtu\.be/|"
+    r"youtube\.com/embed/|youtube\.com/shorts/)([A-Za-z0-9_-]{11})"
+)
+
+
+def _extract_youtube_id(text: str) -> str | None:
+    m = _YOUTUBE_ID_RE.search(text or "")
+    return m.group(1) if m else None
+
+
+def _youtube_thumbnail_html(video_id: str) -> str:
+    """Centered clickable YouTube thumbnail with a "Watch on YouTube" caption."""
+    canonical = f"https://www.youtube.com/watch?v={video_id}"
+    thumb = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
+    return (
+        f'<p style="margin:0 0 6px 0; text-align:center;">'
+        f'<a href="{canonical}" target="_blank" style="text-decoration:none;">'
+        f'<img src="{thumb}" alt="Watch on YouTube" width="480" '
+        f'style="display:block; max-width:100%; width:480px; height:auto; '
+        f'border-radius:4px; margin:0 auto;" />'
+        f'</a></p>'
+        f'<p style="margin:0 0 16px 0; text-align:center; font-size:14px; '
+        f'font-style:italic; color:#666666;">'
+        f'<a href="{canonical}" target="_blank" style="color:#b3421d;">'
+        f'▶ Watch on YouTube</a></p>'
+    )
+
+
+def _replace_youtube_embeds(html: str) -> str:
+    """Replace bare-URL YouTube embeds with a clickable thumbnail block.
+
+    Gutenberg's wp:embed YouTube block, after the comment-strip pass, is left
+    as <figure class="wp-block-embed-youtube"><div class="wp-block-embed__wrapper">URL</div></figure>.
+    Email clients render that as plain text. Also handles <iframe> embeds that
+    survive the context=view fallback path. Non-YouTube wp:embed providers
+    are left untouched.
+    """
+    if "youtu" not in html:
+        return html
+    soup = BeautifulSoup(html, "html.parser")
+
+    for fig in list(soup.find_all("figure")):
+        classes = fig.get("class") or []
+        if isinstance(classes, str):
+            classes = classes.split()
+        if not any(c.startswith("wp-block-embed") for c in classes):
+            continue
+        wrapper = fig.find("div", class_="wp-block-embed__wrapper")
+        text = (wrapper or fig).get_text(" ", strip=True)
+        vid = _extract_youtube_id(text)
+        if not vid:
+            continue
+        replacement = BeautifulSoup(
+            _youtube_thumbnail_html(vid), "html.parser",
+        )
+        fig.replace_with(replacement)
+
+    for iframe in list(soup.find_all("iframe")):
+        src = iframe.get("src") or ""
+        vid = _extract_youtube_id(src)
+        if not vid:
+            continue
+        replacement = BeautifulSoup(
+            _youtube_thumbnail_html(vid), "html.parser",
+        )
+        iframe.replace_with(replacement)
+
     return str(soup)
+
+
+def raw_blocks_to_html(raw: str) -> str:
+    """Public wrapper over the Gutenberg/shortcode stripper.
+
+    Callers that slice the raw body themselves (e.g. newsletter-insider-single
+    taking only the pre-paywall portion) need the same cleanup pass
+    fetch_post_full applies to a whole post.
+    """
+    return _raw_blocks_to_html(raw)
+
+
+# ---------------------------------------------------------------------------
+# Insider paywall break
+# ---------------------------------------------------------------------------
+
+# The theme's centralized Insider gate (hello-uj-child/inc/cta-shortcodes.php).
+# Everything before the opening tag is what a non-member sees on the site.
+INSIDER_GATE_RE = re.compile(r"\[uj_insider_gate(?:\s[^\]]*)?\]", re.IGNORECASE)
+
+# Insider posts predating [uj_insider_gate] pasted SWPM's shortcode per-post.
+LEGACY_GATE_RE = re.compile(r"\[swpm_protected(?:\s[^\]]*)?\]", re.IGNORECASE)
+
+
+def split_raw_at_insider_gate(raw: str) -> tuple[str, bool]:
+    """Split a raw Gutenberg body at the Insider paywall break.
+
+    Returns ``(open_portion, found)`` where `open_portion` is everything
+    BEFORE the opening gate tag. When neither the current nor the legacy
+    marker is present, returns ``(raw, False)`` so the caller decides whether
+    an ungated post is an error for its use case.
+
+    Must run on the RAW body: `_raw_blocks_to_html` strips every shortcode,
+    so the marker is already gone from `content_html`.
+    """
+    for pattern in (INSIDER_GATE_RE, LEGACY_GATE_RE):
+        m = pattern.search(raw or "")
+        if m:
+            return raw[: m.start()], True
+    return raw or "", False
 
 
 def fetch_post_full(
     wp_site: str, post_id: int, auth: tuple[str, str],
 ) -> dict:
-    """Return {title, url, content_html, featured_media} with paywall bypass.
+    """Return {title, url, content_html, featured_media, raw} with paywall bypass.
 
     Tries context=edit first (returns the raw Gutenberg, which includes the
     full body even inside swpm_protected blocks). Falls back to context=view
-    if the credentials lack edit access.
+    if the credentials lack edit access; `raw` is empty on that path, which is
+    how callers detect that shortcode-level markers are unavailable.
     """
     url = f"{wp_site}/wp-json/wp/v2/posts/{post_id}"
 
@@ -81,6 +194,7 @@ def fetch_post_full(
                 "url": data["link"],
                 "content_html": _raw_blocks_to_html(raw),
                 "featured_media": data.get("featured_media") or None,
+                "raw": raw,
             }
 
     resp = requests.get(
@@ -96,6 +210,7 @@ def fetch_post_full(
         "url": data["link"],
         "content_html": _clean_rendered_html(data["content"]["rendered"]),
         "featured_media": data.get("featured_media") or None,
+        "raw": "",
     }
 
 
