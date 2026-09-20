@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>*|MC:SUBJECT|*</title>
+
+  <style>
+    body, table, td, p, a, li { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+    body  { margin: 0; padding: 0; width: 100%; background: #f7f7f7; }
+    table { border-collapse: collapse; }
+    img   { border: 0; height: auto; outline: none; text-decoration: none; display: block; }
+    p     { margin: 0 0 16px 0; }
+
+    body, td, p, a {
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      font-size: 18px;
+      line-height: 1.5;
+      color: #222222;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+    }
+    h1 {
+      font-size: 32px; font-weight: bold; color: #b3421d;
+      margin: 0 0 8px 0; line-height: 1.3;
+    }
+    h2 {
+      font-size: 24px; font-weight: bold; color: #b3421d;
+      margin: 0 0 8px 0; line-height: 1.3;
+    }
+    a { color: #b3421d; text-decoration: underline; }
+
+    .btn {
+      background-color: #b3421d; border-radius: 4px;
+      color: #ffffff !important; text-decoration: none;
+      font-size: 16px; font-weight: bold;
+      padding: 14px 28px; display: inline-block;
+    }
+
+    @media only screen and (max-width: 480px) {
+      .wrapper { width: 100% !important; }
+      .content { padding: 16px !important; }
+      .post-image img { width: 100% !important; }
+    }
+  </style>
+</head>
+
+<body>
+  <!--*|IF:MC_PREVIEW_TEXT|*-->
+  <span style="display:none;font-size:0;line-height:0;max-height:0;overflow:hidden;">
+    *|MC_PREVIEW_TEXT|*
+  </span>
+  <!--*|END:IF|*-->
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f7f7f7;">
+    <tr>
+      <td align="center" style="padding: 24px 0;">
+
+        <table role="presentation" class="wrapper" width="660" cellpadding="0" cellspacing="0"
+               style="max-width:660px; width:100%; background-color:#ffffff;">
+
+          <!-- Share bar (no Subscribe button: recipients are already paid) -->
+          <tr>
+            <td style="padding: 12px 24px; background-color: #faf3ee; border-bottom: 1px solid #e8d9cd; text-align: center;">
+              <a href="*|FORWARD|*" target="_blank"
+                 style="display: inline-block; padding: 8px 18px; margin: 4px 4px;
+                        background-color: #ffffff; color: #b3421d; text-decoration: none;
+                        font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+                        font-size: 14px; font-weight: bold;
+                        border: 1px solid #b3421d; border-radius: 4px;">
+                Share
+              </a>
+            </td>
+          </tr>
+
+          <tr>
+            <td class="content" style="padding: 16px 24px; text-align: center; font-size: 14px; color: #999999;">
+              {# font-size/line-height:inherit on every anchor: the head CSS
+                 rule `body, td, p, a { font-size: 18px }` matches the <a>
+                 directly, which beats the size it would otherwise inherit
+                 from this cell. Without it, links inside any container
+                 smaller than 18px render LARGER than the text around them.
+                 Same convention as inserts.py's generated anchors. #}
+              <a href="*|ARCHIVE|*" style="color: #999999; text-decoration: underline; font-size:inherit; line-height:inherit;">
+                View this email in your browser
+              </a>
+            </td>
+          </tr>
+
+          <!-- ════════════════════════════════════════════════
+               INSIDER ARTICLE (full body, or open portion in
+               --link-full-article mode)
+               ════════════════════════════════════════════════ -->
+          <tr>
+            <td class="content" style="padding: 12px 24px;">
+              {% if insider_featured_image_url %}
+              <a href="{{ insider_url }}" target="_blank" class="post-image">
+                <img src="{{ insider_featured_image_url }}" alt="{{ insider_title }}"
+                     width="612" style="width:100%; max-width:612px; height:auto; border-radius:4px; margin-bottom:16px;" />
+              </a>
+              {% endif %}
+              <h1>{{ insider_title }}</h1>
+
+              {# ---- Greeting box. Edit this copy freely; it is deliberately
+                     template-side (unlike the weekly newsletter, which builds
+                     it in Python) so one-off sends can be reworded here. ---- #}
+              <div style="padding:14px 16px;background-color:#faf3ee;border-left:4px solid #b3421d;margin:0 0 20px 0;">
+                <p style="font-size:18px;line-height:1.5;color:#222222;margin:0 0 12px 0;">
+                  Hi there *|FNAME|*,
+                </p>
+                {% if link_mode %}
+                <p style="font-size:18px;line-height:1.5;color:#222222;margin:0;">
+                  Here's the opening of a new Unseen Japan Insider piece, our way of saying
+                  "thanks" for being a financial supporter of the site. This one continues on
+                  the site rather than in your inbox, so hit the button at the bottom to read
+                  the rest. You can find it and all of our Insider back issues on
+                  <a href="{{ back_issues_url }}" target="_blank" style="color:#b3421d;">our website</a>.
+                </p>
+                {% else %}
+                <p style="font-size:18px;line-height:1.5;color:#222222;margin:0;">
+                  Here's a new Unseen Japan Insider piece, our way of saying "thanks" for being
+                  a financial supporter of the site. You can find
+                  <a href="{{ insider_url }}" target="_blank" style="color:#b3421d;">this article</a>
+                  and all of our Insider back issues on
+                  <a href="{{ back_issues_url }}" target="_blank" style="color:#b3421d;">our website</a>.
+                </p>
+                {% endif %}
+              </div>
+
+              {# ---- Optional one-off message (--message PATH.md). Rendered
+                     from Markdown by inserts.render_markdown_insert, so it
+                     accepts images, ## headings, paragraphs with [links](url),
+                     and {{URL Button Text}}. Use it for a content advisory or
+                     any per-send note. ---- #}
+              {% if message_html %}
+              <div style="padding:14px 16px;background-color:#f4f4f4;border:1px solid #e0e0e0;border-radius:4px;margin:0 0 24px 0;">
+                {{ message_html | safe }}
+              </div>
+              {% endif %}
+
+              {{ insider_body_html | safe }}
+            </td>
+          </tr>
+
+          {% if link_mode %}
+          <!-- ════════════════════════════════════════════════
+               READ MORE  (--link-full-article mode only)
+               ════════════════════════════════════════════════ -->
+          <tr>
+            <td class="content" style="padding: 0 24px 8px 24px;">
+              <hr style="border:0; border-top:2px solid #b3421d; margin:8px 0 20px 0;" />
+              <p style="font-size:18px; line-height:1.5; color:#222222; margin:0 0 8px 0; text-align:center;">
+                {{ read_more_blurb }}
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td class="content" style="padding: 0 24px 8px 24px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" style="margin: 0 auto 16px auto;">
+                <tr>
+                  <td align="center" style="border-radius:4px; background-color:#b3421d;">
+                    <a href="{{ insider_url }}" target="_blank" class="btn"
+                       style="background-color:#b3421d; border-radius:4px; color:#ffffff; display:inline-block;
+                              font-family:Arial, Helvetica, sans-serif; font-size:16px; font-weight:bold;
+                              padding:14px 28px; text-decoration:none;">
+                      {{ read_more_label }}
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              <p style="font-size:14px; line-height:1.5; color:#666666; margin:0; text-align:center;">
+                Signed in as an Insider on the site, you'll see the whole piece.
+                <a href="{{ login_url }}" target="_blank" style="color:#b3421d; font-size:inherit; line-height:inherit;">Log in here</a>
+                if you need to.
+              </p>
+            </td>
+          </tr>
+          {% endif %}
+
+          <!-- Sign-off (no Upgrade-to-Insider CTA: recipients are paid) -->
+          <tr>
+            <td class="content" style="padding: 24px 24px 24px 24px;">
+              <p style="font-size:18px; line-height:1.5; color:#222222; margin:0;">
+                Thanks for being an Insider. &#12414;&#12383;&#12397; (until next time)&#12289;<br />
+                Jay Allen<br />
+                Publisher, <a href="https://unseen-japan.com" target="_blank">Unseen Japan</a>
+              </p>
+            </td>
+          </tr>
+
+        </table>
+
+        <table role="presentation" class="wrapper" width="660" cellpadding="0" cellspacing="0"
+               style="max-width:660px; width:100%;">
+          <tr>
+            <td style="padding: 24px; text-align:center; font-size:13px; line-height:1.5; color:#999999;">
+              Copyright &copy; *|CURRENT_YEAR|* *|LIST:COMPANY|*, All rights reserved.<br />
+              *|IFNOT:ARCHIVE_PAGE|*
+              *|LIST:DESCRIPTION|*<br />
+              <br />
+              <strong>Our mailing address is:</strong><br />
+              *|HTML:LIST_ADDRESS_HTML|*<br />
+              <br />
+              <a href="*|UNSUB|*" style="color:#999999; font-size:inherit; line-height:inherit;">Unsubscribe</a>
+              &nbsp;&middot;&nbsp;
+              <a href="*|UPDATE_PROFILE|*" style="color:#999999; font-size:inherit; line-height:inherit;">Update preferences</a>
+              *|END:IF|*
+            </td>
+          </tr>
+        </table>
+
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>
