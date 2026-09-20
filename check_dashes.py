@@ -9,9 +9,12 @@ verification" step). This is that scan, once.
 Em and en dashes (and their HTML entity forms) are banned anywhere in the
 rendered newsletter: they read as an LLM tell and clash with UJ house style.
 
-The regex matches ``newsletter_free.py``'s ``_BANNED_DASH_RE`` exactly, so the
-CLI check and the script's build-time ``strip_banned_dashes`` agree on what
-counts as a violation.
+The dash alternation matches ``newsletter_free.py``'s ``_BANNED_DASH_RE``, so
+the CLI check and the script's build-time ``strip_banned_dashes`` agree on what
+counts as a violation. Only the alternation is shared: the script's regex also
+absorbs the spaces and tabs hugging a dash (so a spaced dash collapses to one
+comma rather than leaving " , " behind), while this one deliberately does not,
+since a detector should report the dash's own position.
 
 Usage:
   # Pipe rendered HTML in (the primary use, mirrors the old inline check):
@@ -33,7 +36,10 @@ import argparse
 import re
 import sys
 
-# Identical to newsletter_free.py `_BANNED_DASH_RE`. Keep them in sync.
+# The dash alternation below is shared with newsletter_free.py's
+# `_BANNED_DASH_RE`; keep the two character lists in sync. That regex wraps this
+# alternation in `[ 	]*...[ 	]*` so replacement swallows the flanking spaces;
+# detection deliberately doesn't, so reported offsets point at the dash itself.
 BANNED_DASH_RE = re.compile(
     r"—|–|&mdash;|&ndash;|&#8212;|&#x2014;|&#8211;|&#x2013;"
 )

@@ -29,6 +29,7 @@ from pathlib import Path
 import requests
 from jinja2 import Environment, FileSystemLoader
 
+import campaign_html
 import wp_post
 
 
@@ -38,14 +39,33 @@ TEMPLATE_DIR = PROJECT_ROOT / "templates"
 TEMPLATE_NAME = "newsletter-insider.html.j2"
 STATE_FILE = PROJECT_ROOT / "data" / "last-free-newsletter.json"
 STATE_MAX_AGE_DAYS = 3
+DEFAULT_FOLDER = "UJ Insider"
+SCRIPT_NAME = "newsletter-insider"
 
 _BANNED_DASH_RE = re.compile(
-    r"—|–|&mdash;|&ndash;|&#8212;|&#x2014;|&#8211;|&#x2013;"
+    r"[ \t]*(?:—|–|&mdash;|&ndash;|&#8212;|&#x2014;|&#8211;|&#x2013;)[ \t]*"
+)
+
+# newsletter-free.py appends an "Upgrade to our Insider newsletter" blurb to
+# the excerpt of every Insider post it teases, and that text is baked into the
+# state file's `excerpt` rather than added by a template. Recipients here are
+# already paying, so strip it from carried-over excerpts, for the same reason
+# the Insider template drops the footer upgrade CTA and the subscribe button.
+_INSIDER_BLURB_RE = re.compile(
+    r"(?:<br\s*/?>\s*){0,2}"
+    r'<a href="https://unseen-japan\.com/subscribe">Upgrade to our Insider'
+    r".*?distraction-free\.",
+    re.DOTALL,
 )
 
 
+def strip_insider_blurb(html: str) -> str:
+    """Remove the free newsletter's Insider upgrade pitch from an excerpt."""
+    return _INSIDER_BLURB_RE.sub("", html or "").rstrip()
+
+
 def strip_banned_dashes(text: str) -> str:
-    return _BANNED_DASH_RE.sub(",", text)
+    return _BANNED_DASH_RE.sub(", ", text)
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +249,11 @@ def render_html(
         jp_social=free_state.get("jp_social") or [],
         carried_posts=carried_posts,
         extras=free_state.get("extras") or [],
+        # As-sent section HTML from the free run, when the state carries it.
+        # The template prefers these over re-rendering the partials, so edits
+        # made to the free newsletter before sending reach the Insider too.
+        jp_social_html=free_state.get("jp_social_html") or "",
+        extras_html=free_state.get("extras_html") or "",
     )
 
 
@@ -243,13 +268,63 @@ def _suggest_subject_preview(insider_title: str, insider_excerpt: str) -> tuple[
     return subject, preview
 
 
+def send_edited_html(args, log) -> None:
+    """--send-html: create the draft from a hand-edited file, no render."""
+    html, meta = campaign_html.read(
+        args.send_html, script=SCRIPT_NAME,
+        allow_dashes=args.allow_dashes, log=log,
+    )
+    cfg = campaign_html.settings(
+        meta,
+        subject=args.subject, preview=args.preview,
+        segment_id=args.insider_segment_id, folder=args.folder,
+    )
+    subject = cfg.get("subject")
+    if not subject:
+        print(
+            "ERROR: no subject line. Pass --subject, or send a file whose "
+            "sidecar carries one.", file=sys.stderr,
+        )
+        sys.exit(1)
+    if cfg.get("segment_id") is None:
+        print(
+            "ERROR: no segment. Pass --insider-segment-id (otherwise the "
+            "campaign would target the full list).", file=sys.stderr,
+        )
+        sys.exit(1)
+
+    mc_api_key = os.environ.get("MAILCHIMP_API_KEY")
+    if not mc_api_key:
+        print("ERROR: MAILCHIMP_API_KEY not set.", file=sys.stderr)
+        sys.exit(1)
+    mc = MailchimpAPI(mc_api_key)
+
+    log("\nCreating Mailchimp campaign from the edited file...")
+    _, web_id = campaign_html.create_draft(
+        mc, list_name=LIST_NAME, subject=subject,
+        preview=cfg.get("preview", ""), segment_id=cfg["segment_id"],
+        folder=cfg.get("folder", DEFAULT_FOLDER), html=html, log=log,
+    )
+    print(
+        f"\nInsider draft created from {args.send_html}!\n"
+        f"  Subject: {subject}\n"
+        f"  Preview: {cfg.get('preview', '')}\n"
+        f"  Segment: {cfg['segment_id']}\n"
+        f"  Edit: https://{mc.dc}.admin.mailchimp.com/campaigns/edit"
+        f"?id={web_id}",
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Insider newsletter that wraps last week's free draft.",
     )
     parser.add_argument(
-        "--insider-post-id", type=int, required=True,
-        help="WordPress post ID of this week's Insider article.",
+        "--insider-post-id", type=int, default=None,
+        help=(
+            "WordPress post ID of this week's Insider article. Required unless "
+            "--send-html is supplying already-rendered content."
+        ),
     )
     parser.add_argument(
         "--insider-segment-id", type=int, default=None,
@@ -262,11 +337,11 @@ def main() -> None:
     parser.add_argument("--subject", default=None)
     parser.add_argument("--preview", default=None)
     parser.add_argument(
-        "--folder", default="UJ Insider",
+        "--folder", default=None,
         help=(
             "Mailchimp campaign-folder name to file the draft under "
-            "(matched case-insensitively). Default: %(default)s. Pass an empty "
-            "string to leave the campaign unfiled."
+            f"(matched case-insensitively). Default: {DEFAULT_FOLDER}. Pass an "
+            "empty string to leave the campaign unfiled."
         ),
     )
     parser.add_argument(
@@ -277,7 +352,19 @@ def main() -> None:
         "--dump-html", action="store_true",
         help="Render and print HTML; don't touch Mailchimp.",
     )
+    campaign_html.add_args(parser)
     args = parser.parse_args()
+
+    # --send-html: ship a previously written, hand-edited file. Skips the free
+    # state file, the WordPress fetch, and the render entirely.
+    if args.send_html:
+        send_edited_html(args, log=lambda m: print(m, file=sys.stderr))
+        return
+
+    if args.insider_post_id is None:
+        parser.error("--insider-post-id is required (unless using --send-html)")
+
+    folder = args.folder if args.folder is not None else DEFAULT_FOLDER
 
     free_state = load_free_state(args.state)
     print(
@@ -310,7 +397,7 @@ def main() -> None:
             "post_id": p["post_id"],
             "title": strip_banned_dashes(p["title"]),
             "url": p["url"],
-            "excerpt": strip_banned_dashes(p["excerpt"]),
+            "excerpt": strip_insider_blurb(strip_banned_dashes(p["excerpt"])),
             "image_url": p.get("image_url") or "",
         }
         for p in (free_state.get("posts") or [])
@@ -354,10 +441,12 @@ def main() -> None:
 
     # ----------- live setup (before render, so a WebP featured image can be
     #             converted, hosted on Mailchimp, and used in the HTML) -------
+    # --write-html needs Mailchimp too (a WebP featured image has to be hosted
+    # before the HTML can reference it), but not a segment: that can wait
+    # until --send-html.
     mc = None
-    audience = None
     if not args.dump_html:
-        if args.insider_segment_id is None:
+        if args.insider_segment_id is None and not args.write_html:
             print(
                 "ERROR: --insider-segment-id is required for live sends "
                 "(otherwise the campaign would target the full list).",
@@ -369,10 +458,6 @@ def main() -> None:
             print("ERROR: MAILCHIMP_API_KEY not set.", file=sys.stderr)
             sys.exit(1)
         mc = MailchimpAPI(mc_api_key)
-        audience = mc.find_list(LIST_NAME)
-        if not audience:
-            print(f"ERROR: list '{LIST_NAME}' not found.", file=sys.stderr)
-            sys.exit(1)
 
         # Mailchimp rejects WebP. If the featured image is WebP, convert it to
         # JPEG and host it on Mailchimp; otherwise keep the WordPress URL.
@@ -409,30 +494,28 @@ def main() -> None:
         print(html)
         return
 
-    print("\nCreating Mailchimp campaign...", file=sys.stderr)
-    folder_id = None
-    if args.folder.strip():
-        folder_id = mc.find_folder(args.folder)
-        if folder_id:
-            print(f"  Filing under folder: {args.folder} ({folder_id})",
-                  file=sys.stderr)
-        else:
-            print(f"  WARNING: no campaign folder named {args.folder!r}; "
-                  "leaving the draft unfiled.", file=sys.stderr)
-    campaign = mc.create_campaign(
-        list_id=audience["id"],
-        title=subject,
-        subject=subject,
-        preview_text=preview,
-        segment_id=args.insider_segment_id,
-        folder_id=folder_id,
-    )
-    campaign_id = campaign["id"]
-    web_id = campaign.get("web_id", "")
-    print(f"  Campaign ID: {campaign_id}", file=sys.stderr)
+    log = lambda msg: print(msg, file=sys.stderr)  # noqa: E731
 
-    mc.set_campaign_content(campaign_id, html)
-    print("  Content set.", file=sys.stderr)
+    # --write-html: stop here so the file can be edited before it ships.
+    if args.write_html:
+        campaign_html.write(
+            args.write_html, html,
+            script=SCRIPT_NAME,
+            campaign={
+                "subject": subject,
+                "preview": preview,
+                "segment_id": args.insider_segment_id,
+                "folder": folder,
+            },
+            log=log,
+        )
+        return
+
+    print("\nCreating Mailchimp campaign...", file=sys.stderr)
+    campaign_id, web_id = campaign_html.create_draft(
+        mc, list_name=LIST_NAME, subject=subject, preview=preview,
+        segment_id=args.insider_segment_id, folder=folder, html=html, log=log,
+    )
 
     print(
         f"\nInsider draft created!\n"

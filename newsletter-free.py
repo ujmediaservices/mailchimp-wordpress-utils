@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shutil
+import string
 import sys
 import tempfile
 from pathlib import Path
@@ -22,14 +23,25 @@ import requests
 from bs4 import BeautifulSoup
 from jinja2 import Environment, FileSystemLoader
 
+import campaign_html
 import extras as extras_mod
+import free_fragments
 import inserts as inserts_mod
 import jp_social as jp_social_mod
 import wp_post
 
+# Shared UJ WordPress client (D:\uj\uj-common), used by --list-candidates for
+# the 8-day recent-posts pull. The newsletter's own per-post excerpt fetch
+# stays in get_wp_config()/fetch_post_data below (it needs the excerpt field +
+# banned-dash stripping, which ujwp deliberately doesn't do).
+sys.path.insert(0, r"D:\uj\uj-common")
+import ujwp  # noqa: E402
+
 LIST_NAME = "Unseen Japan"
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 DEFAULT_TEMPLATE = "newsletter-free"
+DEFAULT_FOLDER = "Unseen Japan Newsletter"
+SCRIPT_NAME = "newsletter-free"
 
 # Editor's note defaults: required at the top of every send unless explicitly
 # disabled. Archive-after-success rule prevents accidental week-to-week reuse.
@@ -41,18 +53,51 @@ STATE_FILE = PROJECT_ROOT / "data" / "last-free-newsletter.json"
 INSIDER_BLURB = (
     '<br /><br />'
     '<a href="https://unseen-japan.com/subscribe">Upgrade to our Insider '
-    'newsletter</a> to get access to this and <a href="https://unseen-=japan.com/insider">all members-only content</a>. '
+    'newsletter</a> to get access to this and <a href="https://unseen-japan.com/insider">all members-only content</a>. '
     "You'll get a special ad-free newsletter plus ad-free website access - over eight years of "
     'Japan coverage, distraction-free.'
 )
 
 
-def is_insider_post(title: str) -> bool:
-    return "[insider]" in title.lower()
+# UJ dropped the old "[Insider]" title tag (2026-08); members-only posts are
+# now marked by the "Insider" WordPress category. Detection is category-based,
+# with the legacy title tag kept as a backward-compatible fallback.
+INSIDER_CATEGORY_SLUG = "insider"
+
+
+def resolve_insider_category_ids() -> set[int]:
+    """IDs of the members-only "Insider" category, matched by slug.
+
+    Resolved once per run against the live taxonomy so a category-ID change on
+    the WP side can't silently disable the paywall blurb. Returns an empty set
+    if the lookup fails (detection then falls back to the legacy title tag).
+    """
+    try:
+        cats = ujwp.wp_get(
+            "categories", slug=INSIDER_CATEGORY_SLUG,
+            _fields="id,slug", per_page=10,
+        )
+    except Exception:
+        return set()
+    return {
+        c["id"] for c in cats
+        if c.get("slug", "").lower() == INSIDER_CATEGORY_SLUG
+    }
+
+
+def is_insider_post(post: dict, insider_category_ids: set[int]) -> bool:
+    """True if a post is a members-only Insider post.
+
+    Primary signal is membership in the "Insider" category; the legacy
+    "[insider]" title tag is honored as a fallback.
+    """
+    if insider_category_ids & set(post.get("category_ids") or []):
+        return True
+    return "[insider]" in (post.get("title") or "").lower()
 
 
 _BANNED_DASH_RE = re.compile(
-    r"—|–|&mdash;|&ndash;|&#8212;|&#x2014;|&#8211;|&#x2013;"
+    r"[ \t]*(?:—|–|&mdash;|&ndash;|&#8212;|&#x2014;|&#8211;|&#x2013;)[ \t]*"
 )
 
 
@@ -62,8 +107,13 @@ def strip_banned_dashes(text: str) -> str:
     Absolute editorial rule: em and en dashes are banned anywhere in the
     rendered newsletter. WordPress content frequently contains them, so we
     normalize after fetching. See SKILL.md "NEVER use em dashes" section.
+
+    Spaces and tabs hugging the dash are absorbed into the comma, so a
+    spaced dash ("meet - and stalk - young women") yields "meet, and stalk,
+    young women" rather than "meet , and stalk , young women". Newlines are
+    left alone so HTML line structure survives.
     """
-    return _BANNED_DASH_RE.sub(",", text)
+    return _BANNED_DASH_RE.sub(", ", text)
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +171,7 @@ def fetch_post_data(
     *, use_intro: bool = False,
 ) -> dict:
     """Fetch title, link, excerpt, and featured_media ID for a post."""
-    fields = "title,link,excerpt,featured_media"
+    fields = "title,link,excerpt,featured_media,categories"
     if use_intro:
         fields += ",content"
     url = f"{wp_site}/wp-json/wp/v2/posts/{post_id}"
@@ -148,6 +198,7 @@ def fetch_post_data(
         "url": data["link"],
         "excerpt": strip_banned_dashes(html_mod.unescape(excerpt_text)),
         "featured_media": data.get("featured_media") or None,
+        "category_ids": data.get("categories", []) or [],
     }
 
 
@@ -175,6 +226,135 @@ def download_image(
     resp.raise_for_status()
     local_path.write_bytes(resp.content)
     return local_path
+
+
+# ---------------------------------------------------------------------------
+# Candidate listing (--list-candidates): the 8-day recent-posts pull the
+# send-free-newsletter skill uses to propose a slate. READ-ONLY, no Mailchimp
+# calls. Replaces the ~50-line inline `python -c` block the skill used to carry.
+# ---------------------------------------------------------------------------
+
+CANDIDATE_WINDOW_DAYS = 8
+LAST_POSTS_STATE = (
+    PROJECT_ROOT / ".claude" / "skills" / "send-free-newsletter" / "last-posts.json"
+)
+
+
+def _load_excluded_ids() -> set[int]:
+    """Post IDs used in the last newsletter, unioned across both state files.
+
+    Primary source is data/last-free-newsletter.json (written by this script's
+    write_state_file). The skill also writes .claude/.../last-posts.json after a
+    successful run; union both so a just-sent post never resurfaces regardless
+    of which file recorded it. Missing files are a no-op (first run).
+    """
+    excluded: set[int] = set()
+    for path in (STATE_FILE, LAST_POSTS_STATE):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for pid in data.get("post_ids", []):
+            try:
+                excluded.add(int(pid))
+            except (TypeError, ValueError):
+                continue
+    return excluded
+
+
+def _is_advertorial(post: dict, cat_names: dict[int, str]) -> bool:
+    """True if any of the post's categories is an Advertorial/sponsored one.
+
+    UJ files sponsored content under the "Advertorial" category; the title
+    alone can read like normal editorial, so match on category name.
+    """
+    for cid in post.get("categories", []):
+        name = cat_names.get(cid, "").lower()
+        if "advertor" in name or "sponsor" in name:
+            return True
+    return False
+
+
+def collect_candidates() -> dict:
+    """Fetch publish posts from the last 8 days, drop advertorials + the last
+    newsletter's IDs, and letter-label the survivors. Pure read.
+
+    Returns {window_start, excluded_advertorial, excluded_previous,
+    candidate_count, candidates=[{letter,id,date,title}]}.
+    """
+    cutoff = (
+        dt.datetime.now(dt.timezone.utc)
+        - dt.timedelta(days=CANDIDATE_WINDOW_DAYS)
+    ).isoformat()
+    posts = ujwp.wp_get(
+        "posts",
+        _fields="id,title,date,categories",
+        per_page=50,
+        orderby="date",
+        order="desc",
+        status="publish",
+        after=cutoff,
+    )
+
+    # Resolve category names so Advertorial/sponsored posts can be dropped.
+    cat_ids = {c for p in posts for c in p.get("categories", [])}
+    cat_names: dict[int, str] = {}
+    if cat_ids:
+        for c in ujwp.wp_get(
+            "categories",
+            include=",".join(map(str, sorted(cat_ids))),
+            _fields="id,name",
+            per_page=100,
+        ):
+            cat_names[c["id"]] = c.get("name", "")
+
+    excluded = _load_excluded_ids()
+    ads = sorted(p["id"] for p in posts if _is_advertorial(p, cat_names))
+    ad_set = set(ads)
+    filtered = [
+        p for p in posts if p["id"] not in excluded and p["id"] not in ad_set
+    ]
+    excluded_prev = sorted(excluded & {p["id"] for p in posts})
+
+    candidates = [
+        {
+            "letter": letter,
+            "id": p["id"],
+            "date": p["date"][:10],
+            "title": html_mod.unescape(p["title"]["rendered"]),
+        }
+        for letter, p in zip(string.ascii_uppercase, filtered)
+    ]
+    return {
+        "window_start": cutoff[:10],
+        "excluded_advertorial": ads,
+        "excluded_previous": excluded_prev,
+        "candidate_count": len(candidates),
+        "candidates": candidates,
+    }
+
+
+def render_candidates(data: dict, as_json: bool) -> str:
+    """Render collect_candidates() output as JSON or the skill's Letter|ID|Date|Title table."""
+    if as_json:
+        return json.dumps(data, ensure_ascii=False, indent=2)
+    lines: list[str] = []
+    if data["excluded_advertorial"]:
+        lines.append(
+            "# Excluded Advertorial/sponsored posts (NEVER include unless user "
+            f"explicitly asks): {data['excluded_advertorial']}"
+        )
+    if data["excluded_previous"]:
+        lines.append(
+            f"# Excluded from previous newsletter: {data['excluded_previous']}"
+        )
+    lines.append(
+        f"# Window: posts published since {data['window_start']} "
+        f"({data['candidate_count']} candidates)"
+    )
+    for c in data["candidates"]:
+        lines.append(f"{c['letter']} | {c['id']} | {c['date']} | {c['title']}")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -369,12 +549,18 @@ def write_state_file(
     *, campaign_id: str, web_id: str, subject: str, preview: str,
     posts: list[dict], extras: list[dict], jp_social: list[dict],
     editors_note_html: str, log,
+    jp_social_html: str = "", extras_html: str = "",
 ) -> None:
     """Persist what this free run produced so newsletter-insider.py can wrap it.
 
     The Insider script reuses extras + jp_social + editors_note_html verbatim,
     layers the full Insider article on top, and skips ad-style inserts. Only
     the most-recent free run is preserved (file is overwritten each time).
+
+    On the --send-html path the post excerpts and the *_html section fragments
+    are harvested from the file that actually shipped (see free_fragments), so
+    hand edits made between --write-html and --send-html reach the Insider
+    instead of being silently dropped.
     """
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -397,11 +583,120 @@ def write_state_file(
         "extras": extras,
         "jp_social": jp_social,
         "editors_note_html": editors_note_html,
+        # As-sent section HTML, when harvested. The Insider prefers these over
+        # re-rendering the partials from the structured lists above.
+        "jp_social_html": jp_social_html,
+        "extras_html": extras_html,
     }
     STATE_FILE.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8",
     )
     log(f"  State file written: {STATE_FILE.relative_to(PROJECT_ROOT)}")
+
+
+def run_bookkeeping(
+    *, campaign_id: str, web_id: str, subject: str, preview: str,
+    bookkeeping: dict, log,
+) -> None:
+    """Persist state for the Insider wrapper, record JP-social picks, and
+    archive the editor's note so next week starts fresh.
+
+    Split out of main() so the --send-html path replays exactly the same side
+    effects from the sidecar manifest instead of refetching WordPress.
+    """
+    if not bookkeeping:
+        log(
+            "\nPost-send bookkeeping SKIPPED: no sidecar manifest. The Insider "
+            "state file was not written, the JP-social ledger was not updated, "
+            "and the editor's note was not archived. Do these by hand, or "
+            "re-run the render with --write-html so the sidecar exists."
+        )
+        return
+
+    log("\nPost-send bookkeeping...")
+    write_state_file(
+        campaign_id=campaign_id,
+        web_id=web_id,
+        subject=subject,
+        preview=preview,
+        posts=bookkeeping.get("posts") or [],
+        extras=bookkeeping.get("extras") or [],
+        jp_social=bookkeeping.get("jp_social") or [],
+        editors_note_html=bookkeeping.get("editors_note_html", ""),
+        jp_social_html=bookkeeping.get("jp_social_html", ""),
+        extras_html=bookkeeping.get("extras_html", ""),
+        log=log,
+    )
+    jp_social_md = bookkeeping.get("jp_social_md") or ""
+    if jp_social_md:
+        jp_social_mod.record_used(Path(jp_social_md))
+        log("  JP-social ledger updated: data/jp-social-used.json")
+    if not bookkeeping.get("no_editors_note"):
+        note_path = bookkeeping.get("editors_note_path") or ""
+        if note_path:
+            archive_editors_note(Path(note_path), log=log)
+
+
+def send_edited_html(args, log) -> None:
+    """--send-html: create the draft from a hand-edited file, no render."""
+    html, meta = campaign_html.read(
+        args.send_html, script=SCRIPT_NAME,
+        allow_dashes=args.allow_dashes, log=log,
+    )
+    cfg = campaign_html.settings(
+        meta,
+        subject=args.title, preview=args.preview,
+        segment_id=args.segment_id, folder=args.folder,
+    )
+    subject = cfg.get("subject")
+    if not subject:
+        print(
+            "ERROR: no subject line. Pass --title, or send a file whose "
+            "sidecar carries one.", file=sys.stderr,
+        )
+        sys.exit(1)
+
+    mc_api_key = os.environ.get("MAILCHIMP_API_KEY")
+    if not mc_api_key:
+        print("ERROR: MAILCHIMP_API_KEY environment variable not set.",
+              file=sys.stderr)
+        sys.exit(1)
+    mc = MailchimpAPI(mc_api_key)
+
+    log("\nCreating Mailchimp campaign from the edited file...")
+    campaign_id, web_id = campaign_html.create_draft(
+        mc, list_name=LIST_NAME, subject=subject,
+        preview=cfg.get("preview", ""), segment_id=cfg.get("segment_id"),
+        folder=cfg.get("folder", DEFAULT_FOLDER), html=html, log=log,
+    )
+
+    # Harvest the copy as it actually stands in the file we just shipped. The
+    # sidecar manifest was captured at render time, before any hand edits, so
+    # without this the Insider run would wrap the pre-edit version.
+    bookkeeping = meta.get("bookkeeping") or {}
+    if bookkeeping:
+        free_fragments.apply_to_bookkeeping(html, bookkeeping, log=log)
+
+    run_bookkeeping(
+        campaign_id=campaign_id, web_id=str(web_id),
+        subject=subject, preview=cfg.get("preview", ""),
+        bookkeeping=bookkeeping, log=log,
+    )
+
+    segment_note = ""
+    if not cfg.get("segment_id"):
+        segment_note = (
+            "\n  NOTE: No segment specified. The campaign targets the "
+            "full list.\n        Set the audience segment in Mailchimp "
+            "before sending."
+        )
+    print(
+        f"\nDraft campaign created from {args.send_html}!\n"
+        f"  Title: {subject}\n"
+        f"  Edit: https://{mc.dc}.admin.mailchimp.com/campaigns/edit"
+        f"?id={web_id}"
+        f"{segment_note}",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -423,11 +718,11 @@ def main() -> None:
         help="Mailchimp saved segment ID to target (optional).",
     )
     parser.add_argument(
-        "--folder", default="Unseen Japan Newsletter",
+        "--folder", default=None,
         help=(
             "Mailchimp campaign-folder name to file the draft under "
-            "(matched case-insensitively). Default: %(default)s. Pass an empty "
-            "string to leave the campaign unfiled."
+            f"(matched case-insensitively). Default: {DEFAULT_FOLDER}. Pass an "
+            "empty string to leave the campaign unfiled."
         ),
     )
     parser.add_argument(
@@ -510,16 +805,43 @@ def main() -> None:
         "--dump-html", action="store_true",
         help="Render the template with sample data and print it.",
     )
+    parser.add_argument(
+        "--list-candidates", action="store_true",
+        help=(
+            "READ-ONLY: list publish posts from the last 8 days (advertorials "
+            "and last newsletter's IDs dropped, survivors letter-labeled) as a "
+            "Letter|ID|Date|Title table. Combine with --json for structured "
+            "output. Makes no Mailchimp calls."
+        ),
+    )
+    parser.add_argument(
+        "--json", action="store_true",
+        help="With --list-candidates, emit JSON instead of the table.",
+    )
     extras_mod.add_extras_cli_args(parser)
+    campaign_html.add_args(parser)
     args = parser.parse_args()
+
+    # --list-candidates mode: pure WP read, no title/preview/posts required.
+    if args.list_candidates:
+        print(render_candidates(collect_candidates(), as_json=args.json))
+        return
+
+    # --send-html: ship a previously written, hand-edited file. Skips the WP
+    # fetches and the render; bookkeeping is replayed from the sidecar.
+    if args.send_html:
+        send_edited_html(args, log=lambda m: print(m, file=sys.stderr))
+        return
 
     if not args.dump_html and (
         not args.title or not args.preview or not args.posts
     ):
         parser.error(
             "--title, --preview, and --posts are required "
-            "(unless using --dump-html)"
+            "(unless using --dump-html or --list-candidates)"
         )
+
+    folder = args.folder if args.folder is not None else DEFAULT_FOLDER
 
     # --dump-html mode
     if args.dump_html:
@@ -579,6 +901,16 @@ def main() -> None:
     temp_dir = tempfile.mkdtemp(prefix="uj_newsletter_")
     print(f"Temp directory: {temp_dir}", file=sys.stderr)
 
+    insider_category_ids = resolve_insider_category_ids()
+    # The upgrade blurb goes on the FIRST Insider post only; later ones render
+    # their excerpt clean. Tracked across the whole post loop.
+    insider_blurb_used = False
+    if insider_category_ids:
+        print(
+            f"Insider category IDs: {sorted(insider_category_ids)}",
+            file=sys.stderr,
+        )
+
     for post_id in args.posts:
         print(f"  Fetching post {post_id}...", file=sys.stderr)
         try:
@@ -603,14 +935,24 @@ def main() -> None:
                 print(f"  Downloaded: {image_path.name}", file=sys.stderr)
 
         excerpt = post["excerpt"]
-        if is_insider_post(post["title"]):
+        if is_insider_post(post, insider_category_ids):
             if args.no_insider_blurb:
                 print(
                     "  Insider post detected; upgrade blurb suppressed "
                     "(--no-insider-blurb).", file=sys.stderr,
                 )
+            elif insider_blurb_used:
+                # One upgrade pitch per newsletter (Jay's call, 2026-08-10).
+                # A second identical blurb further down reads as nagging and
+                # competes with whatever insert is that week's CTA.
+                print(
+                    "  Insider post detected; upgrade blurb skipped "
+                    "(already used earlier in this newsletter).",
+                    file=sys.stderr,
+                )
             else:
                 excerpt = excerpt + INSIDER_BLURB
+                insider_blurb_used = True
                 print("  Insider post detected, appended upgrade blurb.", file=sys.stderr)
 
         posts_data.append({
@@ -736,59 +1078,67 @@ def main() -> None:
         jp_social=jp_social_items,
     )
 
+    log = lambda msg: print(msg, file=sys.stderr)  # noqa: E731
+
+    # Everything phase 2 needs to finish the job without refetching anything.
+    # Posts are trimmed to the fields write_state_file consumes: the rest
+    # (notably image_path, a local Path) is render-time only.
+    bookkeeping = {
+        "posts": [
+            {
+                "post_id": p["post_id"],
+                "title": p["title"],
+                "url": p["url"],
+                "excerpt": p["excerpt"],
+                "image_url": p.get("image_url") or "",
+            }
+            for p in posts_data
+        ],
+        "extras": extras,
+        "jp_social": jp_social_items,
+        "editors_note_html": editors_note_html,
+        "jp_social_md": str(jp_social_md) if jp_social_md else "",
+        "editors_note_path": str(editors_note_path),
+        "no_editors_note": bool(args.no_editors_note),
+    }
+
+    # -----------------------------------------------------------------------
+    # --write-html: stop here so the file can be edited before it ships.
+    # -----------------------------------------------------------------------
+    if args.write_html:
+        campaign_html.write(
+            args.write_html, newsletter_html,
+            script=SCRIPT_NAME,
+            campaign={
+                "subject": args.title,
+                "preview": args.preview,
+                "segment_id": args.segment_id,
+                "folder": folder,
+            },
+            bookkeeping=bookkeeping,
+            log=log,
+        )
+        log(
+            f"  Bookkeeping deferred: {len(posts_data)} posts, editor's note, "
+            "and the JP-social ledger are recorded when you --send-html."
+        )
+        return
+
     # -----------------------------------------------------------------------
     # Create campaign
     # -----------------------------------------------------------------------
     print("\nCreating Mailchimp campaign...", file=sys.stderr)
-    folder_id = None
-    if args.folder.strip():
-        folder_id = mc.find_folder(args.folder)
-        if folder_id:
-            print(f"  Filing under folder: {args.folder} ({folder_id})",
-                  file=sys.stderr)
-        else:
-            print(f"  WARNING: no campaign folder named {args.folder!r}; "
-                  "leaving the draft unfiled.", file=sys.stderr)
-    campaign = mc.create_campaign(
-        list_id=audience["id"],
-        title=args.title,
-        subject=args.title,
-        preview_text=args.preview,
-        segment_id=args.segment_id,
-        folder_id=folder_id,
+    campaign_id, web_id = campaign_html.create_draft(
+        mc, list_name=LIST_NAME, subject=args.title, preview=args.preview,
+        segment_id=args.segment_id, folder=folder, html=newsletter_html,
+        log=log,
     )
-    campaign_id = campaign["id"]
-    web_id = campaign.get("web_id", "")
-    print(f"  Campaign ID: {campaign_id}", file=sys.stderr)
 
-    # Set content
-    mc.set_campaign_content(campaign_id, newsletter_html)
-    print("  Content set.", file=sys.stderr)
-
-    # -----------------------------------------------------------------------
-    # Persist state for the Insider wrapper + record JP-social picks +
-    # archive the editor's note so next week starts fresh
-    # -----------------------------------------------------------------------
-    print("\nPost-send bookkeeping...", file=sys.stderr)
-    write_state_file(
-        campaign_id=campaign_id,
-        web_id=str(web_id),
-        subject=args.title,
-        preview=args.preview,
-        posts=posts_data,
-        extras=extras,
-        jp_social=jp_social_items,
-        editors_note_html=editors_note_html,
-        log=lambda msg: print(msg, file=sys.stderr),
+    run_bookkeeping(
+        campaign_id=campaign_id, web_id=str(web_id),
+        subject=args.title, preview=args.preview,
+        bookkeeping=bookkeeping, log=log,
     )
-    if jp_social_md:
-        jp_social_mod.record_used(jp_social_md)
-        print(
-            f"  JP-social ledger updated: data/jp-social-used.json",
-            file=sys.stderr,
-        )
-    if not args.no_editors_note:
-        archive_editors_note(editors_note_path, log=lambda msg: print(msg, file=sys.stderr))
 
     segment_note = ""
     if not args.segment_id:
