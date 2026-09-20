@@ -11,6 +11,37 @@ this one is a thin wrapper: it layers the week's Insider article on top of
 whatever the free newsletter already contains, then strips ads since
 Insiders pay for an ad-free experience.
 
+## House style (read BEFORE drafting, not after)
+
+This skill generates far less copy than its upstream sibling: the subject line, the preview
+text, and anything you hand-edit into the HTML. Everything else is carried over from the free
+draft and was already swept there. Sweep what you actually write:
+
+```bash
+python -c "
+import sys; sys.path.insert(0, r'D:\uj\uj-common')
+import ujstyle
+for label, txt in [('subject', '{SUBJECT}'), ('preview', '{PREVIEW}')]:
+    rep = ujstyle.check(txt, where=label)
+    print(rep.render())
+"
+```
+
+Exit-code gating is not useful at two strings; read the findings. Register and diction come
+from `D:/uj/voice/uj-article-voice.md`, banned words from `D:/uj/voice/ai-overused-words.md`.
+
+**Do NOT run `ujstyle.check_rhythm()` here, and never report it as passed.** It is a set-level
+test that returns an empty report below 4 items, so on a subject plus a preview it would come
+back clean having measured nothing at all, which reads as a pass and is not one. The rhythm
+sweep belongs to `/send-free-newsletter`, which pools ~10 shipping strings and is where this
+week's carried-over copy was already checked. If you wrote substantial new prose into the
+Insider email by hand, pool it with the subject and preview and only then it is worth running.
+
+**The Insider article body is exempt from the dash check.** `/uj-prep-pub` already cleaned it
+and `/send-insider-newsletter` strips banned dashes at the render layer. Never edit an Insider
+post in WordPress to fix style; Insider has its own editing process. Subject, preview, and any
+hand-edited HTML still get checked.
+
 ## Working directory
 
 This skill assumes the working directory is `D:\uj\mailchimp-wordpress-utils`.
@@ -115,12 +146,15 @@ Do not proceed.
    (`wp_post.fetch_post_full` is the same helper `newsletter-insider.py` uses to
    pull the article body, so the title/URL you confirm here match what ships.)
 
-   If the title doesn't contain `[Insider]`, ask the user to double-check the
-   ID — you can still proceed if they confirm, but flag it.
+   If the post isn't in the **Insider category (`5665`)**, ask the user to
+   double-check the ID — you can still proceed if they confirm, but flag it.
+   Do not test the title: the `[Insider]` prefix was abolished 2026-08-10 and
+   stripped from every existing post, so a title check now fails on every
+   legitimate Insider article.
 
 3. **Suggest subject + preview, confirm.** Default subject is
-   `Insider: <clean title>` (the script's built-in default strips the
-   `[Insider]` tag). Default preview is the post excerpt. Offer both and ask
+   `Insider: <clean title>` (the script still strips an `[Insider]` tag, now a
+   no-op since the prefix was abolished). Default preview is the post excerpt. Offer both and ask
    the user to confirm, edit, or supply alternatives. Match the
    `/send-free-newsletter` voice rules — punchy, specific, no clickbait, no
    em dashes (`—`/`–` are banned everywhere).
@@ -150,7 +184,9 @@ Do not proceed.
    carried-over free posts appear minus the Insider one, NO Tours/sponsor
    inserts are visible, and NO "Upgrade to Insider" CTA is at the bottom.
 
-6. **Run the script.** Live send (still creates a draft, not a sent email):
+6. **Run the script.** Prefer the two-phase edit-before-send flow (see
+   "Edit before send" below) whenever the user might want to touch the copy.
+   The one-shot live run (still creates a draft, not a sent email) is:
 
    ```bash
    python newsletter-insider.py --insider-post-id 88516 \
@@ -195,6 +231,39 @@ Do not proceed.
      (`check_dashes.py --context` prints the ~60 chars around each hit) to the
      user and ask. Do not fix-by-API anywhere upstream of the user's editorial
      control.
+
+## Edit before send
+
+Mailchimp's classic editor is unpleasant for hand edits, so all three
+newsletter scripts can stop after rendering and let the user edit the HTML
+locally in VS Code. Prefer this over a one-shot live run.
+
+```bash
+python newsletter-insider.py --insider-post-id 88516 --write-html out/insider.html
+```
+
+That renders the real email to `out/insider.html`, writes
+`out/insider.html.meta.json` beside it with the campaign settings **and** the
+carried-over content, and creates **no** Mailchimp campaign. Hand the path to
+the user and wait while they edit.
+
+Then ship exactly that file:
+
+```bash
+python newsletter-insider.py --send-html out/insider.html --insider-segment-id 12345
+```
+
+Notes:
+
+- The sidecar supplies subject, preview, segment, and folder. `--subject`,
+  `--preview`, `--insider-segment-id`, and `--folder` override it.
+- `--send-html` **aborts on any em/en dash** in the file, printing context for
+  each hit. The render layer strips them automatically, so a hit means a hand
+  edit introduced one. Fix it in the file; `--allow-dashes` overrides only if
+  the user insists. This replaces the step-7 dash check when you use this flow.
+- `--send-html` skips the free-state load, the WordPress fetch, and the render,
+  so it ships the file byte for byte and works even if the free state file has
+  aged past 3 days. Re-running `--write-html` discards edits.
 
 ## Insider audience expectations
 

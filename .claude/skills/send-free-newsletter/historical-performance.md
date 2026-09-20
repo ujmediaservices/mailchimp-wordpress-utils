@@ -58,6 +58,8 @@ When the lead post falls into one of these, lean into the pattern hard:
 - Soft cultural explainers without a controversy hook
 - Travel logistics without a stakes angle (visa changes do well *because* of stakes; itinerary recommendations do not)
 
+These are **lead / subject-line** findings: a travel or soft-explainer post makes a weak *lead* because it under-indexes on click rate. It is NOT a reason to exclude the post from the newsletter slate. Travel articles still belong in the body (UJ now serves a travel-first subscriber segment arriving from the Meta ads, so the newsletter keeps positioning unified by carrying travel content). Lead with a high-CTR pattern; carry travel as a supporting item, not the subject hook.
+
 ## Pitch strategy: Insider yes, Tours no
 
 Source: revenue attribution against 96 free-newsletter campaigns since 2024-01-01, joining Mailchimp pitch presence to Stripe and PayPal subscription/payment-intent timestamps within 24h, 48h, and 7-day windows. See `attribute-revenue.py`. Insider coverage is complete (Insider launched April 2025, both processors fully captured). Tours coverage is Stripe-only (no PayPal Tours flow).
