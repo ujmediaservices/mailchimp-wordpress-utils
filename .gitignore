@@ -21,6 +21,11 @@ data/
 inserts/jp-social-*/
 inserts/jp-social-*.md
 inserts/extras-*.md
-inserts/editors-notes.md
+inserts/editors-note*.md
 inserts/archive/
 
+# Editor-local UI prefs (Peacock colors etc.), not project config
+.vscode/
+
+# Rendered newsletters from the edit-before-send flow (--write-html target)
+out/
