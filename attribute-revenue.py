@@ -26,6 +26,10 @@ from pathlib import Path
 
 import requests
 
+# The Stripe mirror lives in the sibling uj-analytics tool.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "uj-analytics"))
+import tours_stripe  # noqa: E402
+
 STRIPE_BASE = "https://api.stripe.com/v1"
 PAYPAL_BASE = "https://api-m.paypal.com"
 DATA_DIR = Path(__file__).parent / "data"
@@ -37,24 +41,10 @@ DATA_DIR = Path(__file__).parent / "data"
 
 def stripe_list(endpoint: str, params: dict | None = None,
                 expand: list[str] | None = None) -> list[dict]:
-    auth = (os.environ["STRIPE_API_KEY"], "")
-    out: list[dict] = []
-    p = dict(params or {})
-    p["limit"] = 100
-    if expand:
-        for i, e in enumerate(expand):
-            p[f"expand[{i}]"] = e
-    while True:
-        r = requests.get(f"{STRIPE_BASE}/{endpoint}", auth=auth,
-                         params=p, timeout=60)
-        r.raise_for_status()
-        data = r.json()
-        out.extend(data["data"])
-        if not data.get("has_more"):
-            break
-        p["starting_after"] = data["data"][-1]["id"]
-        time.sleep(0.05)
-    return out
+    """Stripe objects from the local DuckDB mirror in uj-analytics (topped up with
+    only what is new or changed since the last sync); live Stripe as a fallback."""
+    return tours_stripe.stripe_list((os.environ["STRIPE_API_KEY"], ""),
+                                    endpoint, params, expand)
 
 
 # ---------------------------------------------------------------------------
@@ -281,9 +271,10 @@ def main() -> None:
 
         # Insider signups via subscriptions
         print(f"Fetching Stripe subscriptions since {args.since}...", file=sys.stderr)
+        # items.data[].price is already an inline object on this account's API
+        # version, so no expansion is needed (the mirror stores it as returned).
         subs = stripe_list("subscriptions",
-                           {"status": "all", "created[gte]": since_ts},
-                           expand=["data.items.data.price"])
+                           {"status": "all", "created[gte]": since_ts})
         print(f"  {len(subs)} subscriptions", file=sys.stderr)
 
         events: list[dict] = []
